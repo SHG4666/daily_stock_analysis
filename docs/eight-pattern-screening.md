@@ -15,6 +15,8 @@
 
 候选池只覆盖本次运行的环境变量，原有 `STOCK_LIST` 持久配置保留。技术筛选报告位于 Actions 的 `analysis-reports-*` artifact 中的 `reports/pattern_screen/report.html`；JSON和股票代码文件为审计/下游支持。该新增HTML筛选报告不额外发送通知；现有AI报告维持原通知逻辑。
 
+`PATTERN_SCREEN_*` 参数属于独立CLI和GitHub Repository Variables，刻意不在Web设置页展示；Web设置保存不能修改GitHub的每日工作流参数。
+
 日K同日缓存供重跑使用；新交易日重拉完整窗口，避免前复权因子变化后拼接错误。休市正常跳过，不做个股/大盘分析；盘中手动筛选返回2，不会把前一交易日信号当作今天新信号，`force_run` 也不放宽此日期检查。market-only模式沿用原有大盘流程，不经过此筛选入口。
 
 ## 八形态的初始检测条件

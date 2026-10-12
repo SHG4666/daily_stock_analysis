@@ -52,6 +52,17 @@ class TestYfinanceSymbolConversion(unittest.TestCase):
 
 
 class TestYfinanceFundamentalAdapter(unittest.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        # Keep the fixed dividend fixtures inside the same trailing-year window.
+        # Otherwise their TTM assertions change as the execution date advances.
+        clock = patch(
+            "data_provider.yfinance_fundamental_adapter.pd.Timestamp.now",
+            side_effect=lambda tz=None: pd.Timestamp("2026-06-01", tz=tz),
+        )
+        clock.start()
+        self.addCleanup(clock.stop)
+
     def test_populates_growth_earnings_dividend_boards_for_us_stock(self) -> None:
         info = {
             "financialCurrency": "USD",

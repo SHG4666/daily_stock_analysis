@@ -80,6 +80,14 @@ WEB_SETTINGS_HIDDEN_FROM_UI = {
     "USE_PROXY",
     "PROXY_HOST",
     "PROXY_PORT",
+    # Standalone screening CLI / GitHub Repository Variables; Web settings
+    # cannot configure the scheduled workflow that consumes these fields.
+    "PATTERN_SCREEN_ENABLED",
+    "PATTERN_SCREEN_TOP_N",
+    "PATTERN_SCREEN_WORKERS",
+    "PATTERN_SCREEN_MIN_AMOUNT",
+    "PATTERN_SCREEN_DEADLINE_SECONDS",
+    "PATTERN_SCREEN_MIN_COVERAGE",
 }
 
 _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
