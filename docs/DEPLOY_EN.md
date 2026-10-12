@@ -17,6 +17,8 @@ This document explains how to deploy the AI Stock Analysis System to a server.
 
 ## Option 1: Docker Compose Deployment (Recommended)
 
+The runtime image uses Ubuntu 24.04, Python 3.12 and `/opt/venv` to support current Longbridge wheels requiring glibc 2.39, while retaining `wkhtmltopdf/wkhtmltoimage` report rendering. Sources: [Longbridge's PyPI releases](https://pypi.org/project/longbridge/) and [Ubuntu's Noble wkhtmltopdf package](https://packages.ubuntu.com/noble/wkhtmltopdf). This is a current binary dependency constraint. Mount paths, the API port and application UID 1000 remain unchanged. Roll back to a previously built image if needed; the old Bookworm Dockerfile cannot reinstall current Longbridge wheels.
+
 ### 1. Install Docker
 
 ```bash
