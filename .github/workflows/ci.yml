@@ -98,6 +98,11 @@ jobs:
           from src.patches.eastmoney_patch import eastmoney_patch; print('✅ patch')
           from bot.dispatcher import CommandDispatcher; print('✅ bot')
           from api.app import app; print('✅ api')
+          from longbridge.openapi import Config, QuoteContext; print('✅ longbridge')
+          from src.md2img import markdown_to_image
+          image = markdown_to_image('# Docker report rendering smoke')
+          assert image and image.startswith(bytes([137, 80, 78, 71])), 'PNG rendering failed'
+          print('✅ report PNG rendering')
           print('✅ All Docker imports OK')
           "
 

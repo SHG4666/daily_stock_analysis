@@ -17,6 +17,8 @@
 
 ## 🐳 方案一：Docker Compose 部署（推荐）
 
+镜像运行环境使用 Ubuntu 24.04、Python 3.12 和 `/opt/venv`，兼容当前长桥 SDK 的 glibc 2.39 wheel，同时保留 `wkhtmltopdf/wkhtmltoimage` 报告转图能力。依据：[长桥官方 PyPI 发行文件](https://pypi.org/project/longbridge/)、[Ubuntu 24.04 的 wkhtmltopdf 包](https://packages.ubuntu.com/noble/wkhtmltopdf)。这是当前二进制依赖的运行环境约束；挂载目录、API 端口及应用用户 UID 1000 保持原语义。回退时可使用先前已构建的镜像；旧 Bookworm Dockerfile 无法重新安装当前长桥依赖。
+
 ### 1. 安装 Docker
 
 ```bash

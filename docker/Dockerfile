@@ -13,8 +13,8 @@ RUN npm ci
 COPY apps/dsa-web/ ./
 RUN npm run build
 
-# Pin to bookworm: wkhtmltopdf was removed from Debian testing (2025)
-FROM python:3.11-slim-bookworm
+# Noble retains wkhtmltopdf and provides glibc 2.39 for current Longbridge wheels.
+FROM ubuntu:24.04
 
 # 设置工作目录
 WORKDIR /app
@@ -24,20 +24,30 @@ ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # 安装系统依赖（wkhtmltopdf 含 wkhtmltoimage，用于 Markdown 转图片 Issue #289）
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates \
+    python3 \
+    python3-venv \
     gcc \
     curl \
     git \
     gosu \
     wkhtmltopdf \
     fontconfig \
-    libjpeg62-turbo \
+    libjpeg-turbo8 \
     libxrender1 \
     libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
+# Keep pip packages isolated from Ubuntu's externally managed system Python.
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+ENV QT_QPA_PLATFORM=offscreen
+
 # 创建非 root 用户 (UID 1000)
-RUN groupadd -g 1000 dsa && \
+# The official Noble image ships an ubuntu user with UID 1000.
+RUN if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi && \
+    groupadd -g 1000 dsa && \
     useradd -u 1000 -g dsa -m dsa
 
 # 复制依赖文件
