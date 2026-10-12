@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] 每日分析接入用户图片中的八种日K技术形态筛选，生成带命中证据、行情日期和数据覆盖统计的HTML候选报告，最多10只进入现有分析流程；无候选或数据不足不回退原自选股，支持PATTERN_SCREEN_ENABLED=false恢复原流程。
+- [测试] 八形态筛选新增量价、日期、缓存、覆盖不足与工作流股票池传递的离线回归检查。
 
 - [chore] 移除随 issue / PR 验收流程误入库的截图资产，并明确一次性截图证据应保留在 PR 描述、评论、附件或 artifact 中，不作为仓库文件合入。
 - [修复] 综合情报搜索中的机构分析与业绩预期维度改用 180 天 provider 请求窗口，避免默认短新闻窗口漏掉财报、研报等周期性财经材料。

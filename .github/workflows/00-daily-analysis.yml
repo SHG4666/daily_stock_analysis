@@ -32,7 +32,7 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     # 添加超时限制，防止任务卡死
-    timeout-minutes: ${{ fromJSON(vars.ANALYSIS_TIMEOUT_MINUTES || '30') }}
+    timeout-minutes: ${{ fromJSON(vars.ANALYSIS_TIMEOUT_MINUTES || '60') }}
     
     steps:
       - name: 随机延迟（避免固定时间访问）
@@ -55,9 +55,34 @@ jobs:
       - name: 创建必要目录
         run: |
           mkdir -p data logs reports
+
+      - name: 恢复形态日K缓存
+        if: vars.PATTERN_SCREEN_ENABLED != 'false' && github.event.inputs.mode != 'market-only'
+        uses: actions/cache@v4
+        with:
+          path: data/pattern_screen_cache
+          key: pattern-qfq-v1-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: pattern-qfq-v1-${{ runner.os }}-
+
+      - name: 按图片八形态筛选A股
+        id: patterns
+        if: vars.PATTERN_SCREEN_ENABLED != 'false' && github.event.inputs.mode != 'market-only'
+        env:
+          PATTERN_SCREEN_TOP_N: ${{ vars.PATTERN_SCREEN_TOP_N || '10' }}
+          PATTERN_SCREEN_WORKERS: ${{ vars.PATTERN_SCREEN_WORKERS || '4' }}
+          PATTERN_SCREEN_MIN_AMOUNT: ${{ vars.PATTERN_SCREEN_MIN_AMOUNT || '20000000' }}
+          PATTERN_SCREEN_DEADLINE_SECONDS: ${{ vars.PATTERN_SCREEN_DEADLINE_SECONDS || '1200' }}
+          PATTERN_SCREEN_MIN_COVERAGE: ${{ vars.PATTERN_SCREEN_MIN_COVERAGE || '0.9' }}
+        run: python scripts/screen_eight_patterns.py
       
       - name: 执行股票分析
         env:
+          # 图片八形态股票池只作用于本次运行，不覆盖持久STOCK_LIST。
+          MODE: ${{ github.event.inputs.mode || 'full' }}
+          PATTERN_SCREEN_ACTIVE: ${{ vars.PATTERN_SCREEN_ENABLED != 'false' && github.event.inputs.mode != 'market-only' }}
+          PATTERN_STOCKS: ${{ steps.patterns.outputs.stock_codes }}
+          PATTERN_HAS_CANDIDATES: ${{ steps.patterns.outputs.has_candidates }}
+          PATTERN_SCREEN_STATUS: ${{ steps.patterns.outputs.status }}
           # ==========================================
           # AI 配置
           # ==========================================
@@ -386,7 +411,26 @@ jobs:
           fi
 
           # 判断运行模式
-          MODE="${{ github.event.inputs.mode || 'full' }}"
+          if [ "$PATTERN_SCREEN_ACTIVE" = "true" ]; then
+            if [ "$PATTERN_SCREEN_STATUS" = "market_closed" ]; then
+              echo "A股休市，本次跳过形态选股与分析。"
+              exit 0
+            fi
+            if [ "$PATTERN_SCREEN_STATUS" != "complete" ]; then
+              echo "形态筛选未完成，停止分析；不回退原自选股。"
+              exit 1
+            fi
+            if [ "$PATTERN_HAS_CANDIDATES" = "true" ] && [ -n "$PATTERN_STOCKS" ]; then
+              export STOCK_LIST="$PATTERN_STOCKS"
+              echo "本次使用图片八形态候选股票池：$STOCK_LIST"
+            elif [ "$MODE" = "full" ]; then
+              echo "本次没有八形态候选，仅执行大盘复盘。"
+              MODE="market-only"
+            else
+              echo "本次没有八形态候选，跳过个股分析。"
+              exit 0
+            fi
+          fi
           
           echo "=========================================="
           echo "🚀 A股自选股智能分析系统"
