@@ -15,6 +15,7 @@ import os
 import threading
 import time
 import uuid as uuid_mod
+from copy import deepcopy
 from typing import Any, Dict, Optional
 
 import requests
@@ -358,6 +359,92 @@ class FeishuSender:
         if self._feishu_url:
             return self._send_via_webhook(content, timeout_seconds=timeout_seconds)
         return self._send_via_app_bot(content)
+
+    def send_card_to_feishu(self, card: dict, *, timeout_seconds: Optional[float] = None) -> bool:
+        """Send a structured card without treating a text fallback as chart delivery.
+
+        The caller owns the chart structure. Webhook security fields and keyword
+        are added to a copy, and the byte limit is checked on the exact UTF-8
+        request body. Existing report text formatting and chunking are unchanged.
+        """
+        if not isinstance(card, dict) or not card:
+            logger.error("飞书图表卡片内容无效")
+            return False
+
+        prepared_card = deepcopy(card)
+        if self._feishu_url and self._feishu_keyword:
+            if prepared_card.get("schema") == "2.0":
+                body = prepared_card.get("body")
+                elements = body.get("elements") if isinstance(body, dict) else None
+                keyword_element = {"tag": "markdown", "content": self._feishu_keyword}
+            else:
+                elements = prepared_card.get("elements")
+                keyword_element = {
+                    "tag": "div",
+                    "text": {"tag": "lark_md", "content": self._feishu_keyword},
+                }
+            if not isinstance(elements, list):
+                logger.error("飞书图表卡片缺少有效 elements，无法添加安全关键词")
+                return False
+            elements.insert(0, keyword_element)
+
+        payload = prepared_card
+        if self._feishu_url:
+            payload = {"msg_type": "interactive", "card": prepared_card}
+            payload.update(self._build_security_fields())
+        try:
+            serialized = json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError, RecursionError):
+            logger.error("飞书图表卡片无法序列化为有效 JSON")
+            return False
+        max_bytes = min(self._feishu_max_bytes, 20000)
+        if len(serialized) > max_bytes:
+            logger.error("飞书图表卡片超出字节限制 (%d/%d)，未发送", len(serialized), max_bytes)
+            return False
+
+        if not self._feishu_url:
+            if not self._feishu_chat_id:
+                logger.warning("FEISHU_CHAT_ID 未配置，跳过图表卡片推送")
+                return False
+            client = self._ensure_app_client()
+            if client is None:
+                return False
+            success = self._app_send_raw(client, "interactive", serialized.decode("utf-8"))
+            if success:
+                logger.info("飞书 App Bot 图表卡片发送成功")
+            return success
+
+        try:
+            response = requests.post(
+                self._feishu_url,
+                data=serialized,
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                timeout=timeout_seconds or _WEBHOOK_SEND_TIMEOUT_SECONDS,
+                verify=self._webhook_verify_ssl,
+            )
+        except requests.exceptions.RequestException as exc:
+            # Exception text can contain the secret webhook URL.
+            logger.error("飞书图表卡片网络请求异常: %s", type(exc).__name__)
+            return False
+        if response.status_code != 200:
+            logger.error("飞书图表卡片请求失败: HTTP %d", response.status_code)
+            return False
+        try:
+            result = response.json()
+        except (ValueError, AttributeError):
+            logger.error("飞书图表卡片返回非 JSON 响应")
+            return False
+        if not isinstance(result, dict):
+            logger.error("飞书图表卡片返回非预期格式: %s", type(result).__name__)
+            return False
+        code = result.get("code") if "code" in result else result.get("StatusCode")
+        if code != 0:
+            logger.error("飞书图表卡片返回错误 [code=%s]，未降级为纯文本", code)
+            return False
+        logger.info("飞书 Webhook 图表卡片发送成功")
+        return True
 
     # ------------------------------------------------------------------
     # Webhook path (legacy, unchanged)

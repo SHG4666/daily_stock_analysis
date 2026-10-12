@@ -49,6 +49,13 @@ def test_verified_matches_feed_current_stock_pool_without_overwriting_config(tmp
     assert (tmp_path / "stocks.txt").read_text() == "000001"
     assert "测试银行" in (tmp_path / "report.html").read_text()
     assert "2026-10-12" in (tmp_path / "report.html").read_text()
+    bars = result["selected"][0]["chart_bars"]
+    assert len(bars) == 120
+    assert bars[0]["ma30"] == 10  # Includes earlier data outside the displayed window.
+    assert bars[-1]["date"] == "2026-10-12"
+    assert bars[-1]["volume"] == 2500  # Provider already returns shares; no second conversion.
+    assert bars[-1]["ma20"] == 10.04
+    assert "查看日 K 走势图" in (tmp_path / "report.html").read_text()
 
 
 @pytest.mark.parametrize("problem", ["stale", "error"])

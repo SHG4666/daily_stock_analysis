@@ -12,8 +12,24 @@ from data_provider.base import is_st_stock
 from src.pattern_screener import (
     PATTERN_NAMES, ScreeningDataError, detect_patterns, prepare_bars, volume_ratio,
 )
+from src.services.pattern_chart_renderer import STOCK_CHART_CSS, STOCK_CHART_JS, render_stock_chart
 
 logger = logging.getLogger(__name__)
+
+
+def build_chart_bars(frame):
+    """保留120根真实日K；均线先在完整核验窗口计算，再截取展示区间。"""
+    display = frame.copy()
+    for window in (5, 10, 20, 30):
+        display[f"ma{window}"] = display.close.rolling(window).mean()
+    rows = []
+    for _, row in display.tail(120).iterrows():
+        item = {"date": row["date"].date().isoformat()}
+        for key in ("open", "high", "low", "close", "volume", "ma5", "ma10", "ma20", "ma30"):
+            value = float(row[key])
+            item[key] = round(value, 4) if math.isfinite(value) else None
+        rows.append(item)
+    return rows
 
 
 def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
@@ -61,6 +77,7 @@ def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
                 else "sh" if stock["code"].startswith("6") else "sz"
             ) + stock["code"],
             "closes": [round(float(value), 3) for value in frame.close.tail(60)],
+            "chart_bars": build_chart_bars(frame),
         }
 
     pool = ThreadPoolExecutor(max_workers=workers)
@@ -133,6 +150,7 @@ def render_html(result):
 <div class="card-top"><h3>{escape(candidate['name'])} <small>{escape(candidate['code'])}</small></h3>
 <a target="_blank" rel="noopener" href="{escape(candidate['source_url'], quote=True)}">查看行情 ↗</a></div>
 <p class="tags">{escape(' · '.join(names))} {badge}</p>{_sparkline(candidate['closes'])}
+{render_stock_chart(candidate)}
 <p>行情 {escape(candidate['data_date'])} · 收盘 {candidate['close']:.3f} 元 · 量比 {candidate['volume_ratio']:.2f} · 成交额 {candidate['amount']/1e8:.2f} 亿元</p>
 <ul>{evidence}</ul><p class="muted">待人工查看K线确认；随后核查公告、估值与交易可行性。</p></article>''')
     counts = Counter(signal["name"] for candidate in result.get("candidates", []) for signal in candidate["signals"])
@@ -172,7 +190,8 @@ def render_html(result):
 <p>本次排除ST、停牌、非阳线、当日成交额不足{minimum_amount:g}万元及120根历史不足的股票。杯柄和圆弧底尤其需要人工看图复核。覆盖不足或查询未完成时不会自动回退到原来的自选股。</p>
 <p>数据异常或排除：{issues}。本次日K核验耗时：{result.get('elapsed_seconds',0)}秒。</p>
 <p>股票范围与成交额：<a href="{escape(result.get('universe_url',''),quote=True)}">{escape(result.get('universe_source',''))}</a>；日K：<a href="{escape(result.get('history_url',''),quote=True)}">{escape(result.get('history_source',''))}</a>。每个候选均附独立行情链接。</p></section></main>
-<script>document.querySelectorAll('button[data-filter]').forEach(button=>button.onclick=()=>{{document.querySelectorAll('button[data-filter]').forEach(x=>x.classList.toggle('active',x===button));document.querySelectorAll('article').forEach(card=>card.hidden=!!button.dataset.filter&&!card.dataset.patterns.split('|').includes(button.dataset.filter));}});</script></html>'''
+<style>{STOCK_CHART_CSS}</style>
+<script>document.querySelectorAll('button[data-filter]').forEach(button=>button.onclick=()=>{{document.querySelectorAll('button[data-filter]').forEach(x=>x.classList.toggle('active',x===button));document.querySelectorAll('article').forEach(card=>card.hidden=!!button.dataset.filter&&!card.dataset.patterns.split('|').includes(button.dataset.filter));}});{STOCK_CHART_JS}</script></html>'''
 
 
 def write_result(result, output_dir):
