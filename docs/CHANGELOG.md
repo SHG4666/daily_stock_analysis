@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+
+- [修复] GitHub每日股票分析定时调整为工作日北京时间18:07，避开整点调度高峰，并明确漏跑后的手动补跑及schedule事件验收方式；本地调度配置保持独立。
 - [新功能] 八形态报告内置可切换30/60/120日的前复权K线、均线和成交量；每日入选股额外推送可在飞书内放大的原生趋势图，复用现有凭据并遵守通知路由与降噪设置，支持单独关闭图表推送。
 - [新功能] 每日分析接入用户图片中的八种日K技术形态筛选，生成带命中证据、行情日期和数据覆盖统计的HTML候选报告，最多10只进入现有分析流程；无候选或数据不足不回退原自选股，支持PATTERN_SCREEN_ENABLED=false恢复原流程。
 - [测试] 八形态筛选新增量价、日期、缓存、覆盖不足与工作流股票池传递的离线回归检查。

@@ -4,7 +4,11 @@
 
 ## 每日流程
 
-`.github/workflows/00-daily-analysis.yml` 仍于北京时间周一至周五18:00运行：
+`.github/workflows/00-daily-analysis.yml` 计划于北京时间周一至周五18:07运行，避开整点调度高峰。GitHub定时触发可能延迟或漏跑，启用状态和手动运行成功不等于定时触发已经验收；需确认Actions中出现`event=schedule`的运行记录。此时间只影响GitHub Actions，不改变本地`SCHEDULE_TIME`配置。
+
+漏跑时可在Actions的“每日股票分析”中选择main分支、full模式手动补跑；这会执行当天筛选、分析并向已有通知渠道发送结果。收盘后、最新完整交易日和有效覆盖检查仍然适用，不用`force_run`绕过日期核验。定时触发的限制见[GitHub官方说明](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)。
+
+每日流程：
 
 1. 从新浪 `hs_a` 分页读取沪深京A股报价和当前名称，分页缺失或重复即停止。
 2. 排除ST/名称缺失、停牌/无报价、非阳线、当日成交额不足2000万元。
