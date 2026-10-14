@@ -28,6 +28,7 @@ from src.report_language import (
     normalize_report_language,
 )
 from src.utils.data_processing import normalize_model_used
+from src.stock_links import format_stock_name_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ def render(
             "result": r,
             "signal_text": st,
             "signal_emoji": se,
-            "stock_name": _escape_md(rn),
+            "stock_name": format_stock_name_markdown(rn, r.code, escape_underscores=True),
             "localized_operation_advice": localize_operation_advice(r.operation_advice, report_language),
             "localized_trend_prediction": localize_trend_prediction(r.trend_prediction, report_language),
         })
