@@ -17,20 +17,17 @@
 5. 同股多形态合并，按命中数、量比、代码排序，默认最多10只交给原有AI分析/报告流程，沿用既有通知渠道。
 6. 无候选时，full模式只做大盘复盘，stocks-only模式跳过分析。查询未完成或有效覆盖不足90%时停止；不会回退600519等旧自选股。
 
-候选池只覆盖本次运行的环境变量，原有 `STOCK_LIST` 持久配置保留。技术筛选报告位于 Actions 的 `analysis-reports-*` artifact 中的 `reports/pattern_screen/report.html`；JSON和股票代码文件为审计/下游支持。报告内可展开每只候选的日K走势图，无需跳到第三方软件；现有AI文字报告维持原通知逻辑。
+候选池只覆盖本次运行的环境变量，原有 `STOCK_LIST` 持久配置保留。技术筛选报告位于 Actions 的 `analysis-reports-*` artifact 中的 `reports/pattern_screen/report.html`；JSON和股票代码文件为审计/下游支持。报告内点击股票名称可直接打开第三方行情；AI文字报告中的A股名称也可点击，沿用原通知流程。
 
-## 直接查看股票走势
+## 点击股票名称查看行情
 
-- 报告内包含真实前复权OHLC日K、MA5/10/20/30和成交量。默认60个交易日，可切换30/60/120日；鼠标、轻点或日期滑块查看历史量价。均线先在完整核验窗口计算，再截取展示区间，避免截断后的均线失真。历史缺失的旧报告明确提示无法作图，不把收盘价伪造成K线。
-- 每日AI分析之后，额外给本次入选股票发送飞书原生图表卡片，每只一张。卡片包含收盘价格及四条均线、成交量柱图，点击可在飞书内放大查看；这是收盘后的日K价格趋势，不是实时分时行情或原生蜡烛图。
-- 复用现有Webhook或App Bot，不新增图片上传凭据。遵守report通知路由、静默时段和既有降噪策略；未配置飞书或report排除了飞书时仅保存图表产物。图表发送失败会单独记录，不影响已生成的分析报告，也不以纯文本成功冒充图表成功。
-- 默认展示60个交易日；为满足飞书20KB完整请求限制，必要时缩到50/40/30日并在卡片中明确标注。最终请求含关键词及签名后再次计量。`reports/pattern_screen/feishu_charts/delivery.json`保留每只股票的实际发送状态；同目录下的JSON不包含凭据。
+- HTML候选报告、日报摘要、单股报告及模板报告中的A股股票名称直接链接腾讯行情，覆盖沪深京市场。点击名称即可在第三方查看K线和实时行情；行情页由第三方提供，报告仍标注筛选时的行情日期。
+- 候选页面不再绘制价格曲线、K线或成交量图，每日Actions也不再额外推送自绘走势图卡片。原文字分析报告和大盘复盘继续按已有通知路由发送，筛选条件、排序和计划时间保持现状。
+- 链接由股票代码生成固定腾讯域名地址；名称和链接标签经过转义。无法确认市场的代码保留普通名称，不猜测港股、美股地址。
 
-单独预览（不推送）：`python scripts/send_pattern_charts.py`。只有加`--send`才发送，并拒绝推送日期早于最近完整交易日的旧报告。原`screen_eight_patterns.py`仍只筛选，不发送通知、不调用AI。
+旧`PATTERN_SCREEN_CHARTS_ENABLED`变量不再控制每日工作流，删除或保留旧变量都不会恢复自动图卡。历史图表数据字段和显式图表CLI保留兼容，但每日任务不调用该CLI。回退本次展示改动可revert提交；无需配置或数据库迁移。
 
-设GitHub Repository Variable `PATTERN_SCREEN_CHARTS_ENABLED=false`仅关闭额外飞书走势图；HTML日K和原文字报告继续保留。全功能回退仍使用`PATTERN_SCREEN_ENABLED=false`或revert提交，无配置或数据库迁移。
-
-原生图表格式和当前客户端能力依据：[飞书图表组件](https://open.feishu.cn/document/feishu-cards/card-json-v2-components/content-components/chart)、[自定义机器人说明与20KB限制](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot)。本文仅承诺官方当前支持的折线与柱状图，不依赖额外K线扩展或JavaScript卡片语法。专题规则仅有中文文档，无对应英文副本。
+专题说明没有英文副本；通用报告链接行为同时适用于中英文输出。
 
 `PATTERN_SCREEN_*` 参数属于独立CLI和GitHub Repository Variables，刻意不在Web设置页展示；Web设置保存不能修改GitHub的每日工作流参数。
 

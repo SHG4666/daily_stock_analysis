@@ -51,6 +51,7 @@ from src.report_language import (
 from bot.models import BotMessage
 from src.utils.sanitize import sanitize_diagnostic_text
 from src.utils.data_processing import normalize_model_used
+from src.stock_links import format_stock_name_markdown
 from src.notification_sender import (
     AstrbotSender,
     CustomWebhookSender,
@@ -277,8 +278,8 @@ class NotificationService(
 
     def _get_display_name(self, result: AnalysisResult, language: Optional[str] = None) -> str:
         report_language = normalize_report_language(language or self._get_report_language(result))
-        return self._escape_md(
-            get_localized_stock_name(result.name, result.code, report_language)
+        return format_stock_name_markdown(
+            get_localized_stock_name(result.name, result.code, report_language), result.code,
         )
 
     def _get_history_compare_context(self, results: List[AnalysisResult]) -> Dict[str, Any]:
