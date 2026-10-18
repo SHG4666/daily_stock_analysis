@@ -27,6 +27,7 @@ from src.storage import get_db
 from data_provider import DataFetcherManager
 from data_provider.base import normalize_stock_code
 from data_provider.realtime_types import ChipDistribution
+from data_provider.shareholder_count import ShareholderCountProvider
 from src.analyzer import (
     GeminiAnalyzer,
     AnalysisResult,
@@ -130,6 +131,7 @@ class StockAnalysisPipeline:
         # 初始化各模块
         self.db = get_db()
         self.fetcher_manager = DataFetcherManager()
+        self.shareholder_count_provider = ShareholderCountProvider()
         # 不再单独创建 akshare_fetcher，统一使用 fetcher_manager 获取增强数据
         self.trend_analyzer = StockTrendAnalyzer()  # 技术分析器
         self.analyzer = GeminiAnalyzer(config=self.config, skills=self.analysis_skills)
@@ -389,6 +391,10 @@ class StockAnalysisPipeline:
             fundamental_context = self._attach_belong_boards_to_fundamental_context(
                 code,
                 fundamental_context,
+            )
+            fundamental_context = self._attach_shareholder_count_to_fundamental_context(
+                code, fundamental_context,
+                as_of=get_market_now("cn", current_time=current_time).date(),
             )
 
             # P0: write-only snapshot, fail-open, no read dependency on this table.
@@ -889,6 +895,22 @@ class StockAnalysisPipeline:
         )
 
         return enhanced
+
+    def _attach_shareholder_count_to_fundamental_context(self, code, context, as_of):
+        """单独查询披露户数，避免基本面bundle超时连带丢失；不修改其缓存。"""
+        provider = getattr(self, "shareholder_count_provider", None)
+        if provider is None:
+            return context
+        try:
+            payload = provider.get_latest(code, as_of)
+        except Exception as exc:
+            logger.warning("%s 股东户数查询不可用：%s", code, type(exc).__name__)
+            return context
+        if not payload:
+            return context
+        enriched = dict(context) if isinstance(context, dict) else {}
+        enriched["shareholder_count"] = payload
+        return enriched
 
     def _attach_belong_boards_to_fundamental_context(
         self,

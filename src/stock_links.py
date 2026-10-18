@@ -8,7 +8,7 @@ from data_provider.base import normalize_stock_code
 
 
 def get_a_share_quote_url(code: str) -> Optional[str]:
-    """Return a known A-share quote URL without discarding exchange identity."""
+    """Return a Xueqiu A-share quote URL without discarding exchange identity."""
     raw_code = str(code or "").strip()
     explicit_market = re.fullmatch(r"(SH|SZ|SS|BJ)\.?[0-9]{6}", raw_code, re.IGNORECASE)
     if explicit_market is None:
@@ -25,7 +25,7 @@ def get_a_share_quote_url(code: str) -> Optional[str]:
     # SH000001 is the Shanghai index, not the SZ000001 A-share with the same digits.
     if declared_exchange is not None and declared_exchange != exchange:
         return None
-    return f"https://gu.qq.com/{exchange}{normalized}"
+    return f"https://xueqiu.com/S/{exchange.upper()}{normalized}"
 
 
 def format_stock_name_markdown(name: str, code: str, *, escape_underscores: bool = False) -> str:

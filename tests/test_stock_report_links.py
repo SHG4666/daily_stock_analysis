@@ -14,19 +14,19 @@ from src.stock_links import format_stock_name_markdown, get_a_share_quote_url
 
 
 @pytest.mark.parametrize("code,symbol", [
-    ("001391", "sz001391"), ("300879", "sz300879"),
-    ("600519", "sh600519"), ("688001", "sh688001"),
-    ("430047", "bj430047"), ("830799", "bj830799"),
-    ("870001", "bj870001"), ("880001", "bj880001"), ("920978", "bj920978"),
-    ("SH600519", "sh600519"), ("sz.001391", "sz001391"),
-    ("688001.SH", "sh688001"), ("BJ920978", "bj920978"),
-    ("SH.600519", "sh600519"), ("SS.600519", "sh600519"), ("600519.SS", "sh600519"),
-    ("SZ300879", "sz300879"), ("SZ.300879", "sz300879"), ("300879.SZ", "sz300879"),
-    ("BJ.920978", "bj920978"), ("920978.BJ", "bj920978"),
-    ("  600519.sh  ", "sh600519"), ("bj.920978", "bj920978"),
+    ("001391", "SZ001391"), ("300879", "SZ300879"),
+    ("600519", "SH600519"), ("688001", "SH688001"),
+    ("430047", "BJ430047"), ("830799", "BJ830799"),
+    ("870001", "BJ870001"), ("880001", "BJ880001"), ("920978", "BJ920978"),
+    ("SH600519", "SH600519"), ("sz.001391", "SZ001391"),
+    ("688001.SH", "SH688001"), ("BJ920978", "BJ920978"),
+    ("SH.600519", "SH600519"), ("SS.600519", "SH600519"), ("600519.SS", "SH600519"),
+    ("SZ300879", "SZ300879"), ("SZ.300879", "SZ300879"), ("300879.SZ", "SZ300879"),
+    ("BJ.920978", "BJ920978"), ("920978.BJ", "BJ920978"),
+    ("  600519.sh  ", "SH600519"), ("bj.920978", "BJ920978"),
 ])
 def test_quote_url_maps_only_known_a_share_codes(code, symbol):
-    assert get_a_share_quote_url(code) == f"https://gu.qq.com/{symbol}"
+    assert get_a_share_quote_url(code) == f"https://xueqiu.com/S/{symbol}"
 
 
 @pytest.mark.parametrize("code", [
@@ -72,7 +72,7 @@ def test_stock_name_cannot_inject_another_markdown_or_html_link(name):
     formatted = format_stock_name_markdown(name, "001391")
     parser = Anchors()
     parser.feed(markdown2.markdown(formatted))
-    assert parser.urls == ["https://gu.qq.com/sz001391"]
+    assert parser.urls == ["https://xueqiu.com/S/SZ001391"]
 
 
 def test_unknown_market_remains_plain_name_and_legacy_underscore_choices_are_kept():
@@ -99,7 +99,7 @@ def test_legacy_reports_link_stock_names_in_full_and_summary_modes(method, summa
     with mock.patch("src.notification.get_config", return_value=config):
         service = NotificationService()
         report = getattr(service, method)(stock if method == "generate_single_stock_report" else [stock])
-    link = "[国货航](https://gu.qq.com/sz001391)"
+    link = "[国货航](https://xueqiu.com/S/SZ001391)"
     assert link in report
     assert link in format_feishu_markdown(report)
     assert stock.name == "国货航"
@@ -113,8 +113,8 @@ def test_jinja_templates_keep_linked_names(platform, summary_only):
     with mock.patch("src.services.report_renderer.get_config", return_value=config):
         report = render(platform, [result()], summary_only=summary_only)
     assert report is not None
-    assert "[国货航](https://gu.qq.com/sz001391)" in report
-    assert "[国货航](https://gu.qq.com/sz001391)" in format_feishu_markdown(report)
+    assert "[国货航](https://xueqiu.com/S/SZ001391)" in report
+    assert "[国货航](https://xueqiu.com/S/SZ001391)" in format_feishu_markdown(report)
 
 
 @pytest.mark.parametrize("method", ["generate_dashboard_report", "generate_brief_report"])
@@ -124,7 +124,7 @@ def test_notification_renderer_enabled_path_uses_linked_template_names(method):
          mock.patch("src.services.report_renderer.get_config", return_value=config):
         service = NotificationService()
         report = getattr(service, method)([result()])
-    assert "[国货航](https://gu.qq.com/sz001391)" in report
+    assert "[国货航](https://xueqiu.com/S/SZ001391)" in report
 
 
 def test_actual_feishu_card_keeps_linked_title_without_sending_a_second_chart_card():
@@ -138,5 +138,5 @@ def test_actual_feishu_card_keeps_linked_title_without_sending_a_second_chart_ca
         assert service.send_to_feishu(report)
     post.assert_called_once()
     card = post.call_args.kwargs["json"]["card"]
-    assert "[国货航](https://gu.qq.com/sz001391)" in card["elements"][0]["text"]["content"]
+    assert "[国货航](https://xueqiu.com/S/SZ001391)" in card["elements"][0]["text"]["content"]
     assert all(element["tag"] != "chart" for element in card["elements"])

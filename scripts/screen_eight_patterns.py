@@ -10,8 +10,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from data_provider.pattern_market_data import PatternMarketData
+from data_provider.shareholder_count import ShareholderCountProvider
 from src.core.trading_calendar import get_effective_trading_date, get_market_now, is_market_open
-from src.services.pattern_screening_service import screen_market, write_result
+from src.services.pattern_screening_service import enrich_shareholder_counts, screen_market, write_result
 
 
 def parse_args(argv=None):
@@ -70,6 +71,7 @@ def main(argv=None):
         result = screen_market(provider, as_of, top_n=args.top, workers=args.workers,
                                min_amount=args.min_amount, deadline_seconds=args.deadline,
                                min_coverage=args.min_coverage)
+        enrich_shareholder_counts(result, ShareholderCountProvider(), workers=args.workers)
         write_result(result, args.output_dir)
         write_github_outputs(result)
         logging.info("筛选结束：状态=%s 全市场=%s 基础通过=%s 候选=%s 选入分析=%s",
