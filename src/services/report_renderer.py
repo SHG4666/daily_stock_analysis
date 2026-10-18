@@ -29,6 +29,7 @@ from src.report_language import (
 )
 from src.utils.data_processing import normalize_model_used
 from src.stock_links import format_stock_name_markdown
+from src.shareholder_count import format_shareholder_count
 
 logger = logging.getLogger(__name__)
 
@@ -124,11 +125,15 @@ def render(
     for r in sorted_results:
         st, se, _ = get_signal_level(r.operation_advice, r.sentiment_score, report_language)
         rn = get_localized_stock_name(r.name, r.code, report_language)
+        fundamental_context = r.fundamental_context if isinstance(r.fundamental_context, dict) else {}
         sorted_enriched.append({
             "result": r,
             "signal_text": st,
             "signal_emoji": se,
             "stock_name": format_stock_name_markdown(rn, r.code, escape_underscores=True),
+            "shareholder_count_text": format_shareholder_count(
+                fundamental_context.get("shareholder_count"), report_language, expected_code=r.code,
+            ),
             "localized_operation_advice": localize_operation_advice(r.operation_advice, report_language),
             "localized_trend_prediction": localize_trend_prediction(r.trend_prediction, report_language),
         })

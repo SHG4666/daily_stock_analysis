@@ -6,6 +6,7 @@ import math
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
+from datetime import date
 from pathlib import Path
 
 from data_provider.base import is_st_stock
@@ -13,6 +14,7 @@ from src.pattern_screener import (
     PATTERN_NAMES, ScreeningDataError, detect_patterns, prepare_bars, volume_ratio,
 )
 from src.stock_links import get_a_share_quote_url
+from src.shareholder_count import format_shareholder_count
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +125,31 @@ def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
     }
 
 
+def enrich_shareholder_counts(result, provider, workers=4, deadline_seconds=30):
+    """技术筛选完成后补充披露数据，失败或超时不改变候选、排序和覆盖结论。"""
+    if result.get("status") != "complete" or not result.get("candidates"):
+        return
+    as_of = date.fromisoformat(result["as_of"])
+    pool = ThreadPoolExecutor(max_workers=min(4, max(1, workers)))
+    futures = {
+        pool.submit(provider.get_latest, candidate["code"], as_of): candidate
+        for candidate in result["candidates"]
+    }
+    try:
+        for future in as_completed(futures, timeout=deadline_seconds):
+            candidate = futures[future]
+            try:
+                payload = future.result()
+                if payload:
+                    candidate["shareholder_count"] = payload
+            except Exception as exc:
+                logger.warning("%s 股东户数补充失败：%s", candidate["code"], type(exc).__name__)
+    except TimeoutError:
+        logger.info("股东户数补充预算用尽，继续输出已完成的候选报告")
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
 def render_html(result):
     escape = html.escape
     cards = []
@@ -140,10 +167,15 @@ def render_html(result):
         if quote_url:
             stock_label = (f'<a target="_blank" rel="noopener noreferrer" '
                            f'href="{escape(quote_url, quote=True)}">{stock_label} ↗</a>')
+        holder_text = format_shareholder_count(
+            candidate.get("shareholder_count"), expected_code=candidate["code"],
+        )
+        holder_line = f'<p class="holders">{escape(holder_text)}</p>' if holder_text else ''
         cards.append(f'''<article data-patterns="{escape('|'.join(names), quote=True)}">
 <div class="card-top"><h3>{stock_label}</h3></div>
 <p class="tags">{escape(' · '.join(names))} {badge}</p>
 <p>行情 {escape(candidate['data_date'])} · 收盘 {candidate['close']:.3f} 元 · 量比 {candidate['volume_ratio']:.2f} · 成交额 {candidate['amount']/1e8:.2f} 亿元</p>
+{holder_line}
 <ul>{evidence}</ul><p class="muted">待人工查看K线确认；随后核查公告、估值与交易可行性。</p></article>''')
     counts = Counter(signal["name"] for candidate in result.get("candidates", []) for signal in candidate["signals"])
     buttons = '<button class="active" data-filter="">全部</button>' + "".join(

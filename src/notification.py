@@ -52,6 +52,7 @@ from bot.models import BotMessage
 from src.utils.sanitize import sanitize_diagnostic_text
 from src.utils.data_processing import normalize_model_used
 from src.stock_links import format_stock_name_markdown
+from src.shareholder_count import format_shareholder_count
 from src.notification_sender import (
     AstrbotSender,
     CustomWebhookSender,
@@ -281,6 +282,14 @@ class NotificationService(
         return format_stock_name_markdown(
             get_localized_stock_name(result.name, result.code, report_language), result.code,
         )
+
+    def _append_shareholder_count(self, lines: List[str], result: AnalysisResult, language: str) -> None:
+        """Append disclosed count text without fetching or modifying stock names."""
+        context = getattr(result, "fundamental_context", None)
+        payload = context.get("shareholder_count") if isinstance(context, dict) else None
+        text = format_shareholder_count(payload, language, expected_code=result.code)
+        if text:
+            lines.append(text)
 
     def _get_history_compare_context(self, results: List[AnalysisResult]) -> Dict[str, Any]:
         """Fetch and cache history comparison data for markdown rendering."""
@@ -844,6 +853,7 @@ class NotificationService(
                     f"{labels['score_label']} {r.sentiment_score} | "
                     f"{localize_trend_prediction(r.trend_prediction, report_language)}"
                 )
+                self._append_shareholder_count(report_lines, r, report_language)
         else:
             report_lines.extend([f"## 📈 {labels['report_title']}", ""])
             # 逐个股票的详细分析
@@ -860,6 +870,7 @@ class NotificationService(
                     f"**Confidence：{confidence_stars}**",
                     "",
                 ])
+                self._append_shareholder_count(report_lines, result, report_language)
                 self._append_market_snapshot(report_lines, result)
                 
                 # 核心看点
@@ -1093,6 +1104,8 @@ class NotificationService(
                     f"{labels['score_label']} {r.sentiment_score} | "
                     f"{localize_trend_prediction(r.trend_prediction, report_language)}"
                 )
+                if self._report_summary_only:
+                    self._append_shareholder_count(report_lines, r, report_language)
             report_lines.extend([
                 "",
                 "---",
@@ -1112,6 +1125,7 @@ class NotificationService(
                     f"## {signal_emoji} {stock_name} ({result.code})",
                     "",
                 ])
+                self._append_shareholder_count(report_lines, result, report_language)
                 
                 # ========== 舆情与基本面概览（放在最前面）==========
                 intel = dashboard.get('intelligence', {}) if dashboard else {}
@@ -1395,6 +1409,7 @@ class NotificationService(
                     f"{labels['score_label']} {r.sentiment_score} | "
                     f"{localize_trend_prediction(r.trend_prediction, report_language)}"
                 )
+                self._append_shareholder_count(lines, r, report_language)
         else:
             for result in sorted_results:
                 signal_text, signal_emoji, _ = self._get_signal_level(result)
@@ -1409,6 +1424,7 @@ class NotificationService(
                 # 标题行：信号等级 + 股票名称
                 lines.append(f"### {signal_emoji} **{signal_text}** | {stock_name}({result.code})")
                 lines.append("")
+                self._append_shareholder_count(lines, result, report_language)
                 
                 # 核心决策（一句话）
                 one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary
@@ -1540,6 +1556,7 @@ class NotificationService(
             
             # 核心信息行
             lines.append(f"### {emoji} {self._get_display_name(result, report_language)}({result.code})")
+            self._append_shareholder_count(lines, result, report_language)
             lines.append(
                 f"**{localize_operation_advice(result.operation_advice, report_language)}** | "
                 f"{labels['score_label']}:{result.sentiment_score} | "
@@ -1632,6 +1649,7 @@ class NotificationService(
                 f"{localize_operation_advice(r.operation_advice, report_language)} | "
                 f"{labels['score_label']} {r.sentiment_score} | {one}"
             )
+            self._append_shareholder_count(lines, r, report_language)
         lines.append("")
         lines.append(f"*{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
         models = self._collect_models_used(results)
@@ -1669,6 +1687,7 @@ class NotificationService(
             f"> {report_date} | {labels['score_label']}: **{result.sentiment_score}** | {localize_trend_prediction(result.trend_prediction, report_language)}",
             "",
         ]
+        self._append_shareholder_count(lines, result, report_language)
 
         excerpt = self._public_phase_pack_excerpt(result, report_language)
         if excerpt:

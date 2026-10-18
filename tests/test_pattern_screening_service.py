@@ -56,7 +56,7 @@ def test_verified_matches_feed_current_stock_pool_without_overwriting_config(tmp
     assert bars[-1]["volume"] == 2500  # Provider already returns shares; no second conversion.
     assert bars[-1]["ma20"] == 10.04
     rendered = (tmp_path / "report.html").read_text()
-    assert 'href="https://gu.qq.com/sz000001">测试银行 <small>000001</small>' in rendered
+    assert 'href="https://xueqiu.com/S/SZ000001">测试银行 <small>000001</small>' in rendered
     assert '<svg' not in rendered
     assert 'stock-chart' not in rendered
 
