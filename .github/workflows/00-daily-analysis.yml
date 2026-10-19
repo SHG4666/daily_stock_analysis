@@ -64,7 +64,7 @@ jobs:
           key: pattern-qfq-v1-${{ runner.os }}-${{ github.run_id }}
           restore-keys: pattern-qfq-v1-${{ runner.os }}-
 
-      - name: 按图片八形态筛选A股
+      - name: 按图片形态与扩展突破规则筛选A股
         id: patterns
         if: vars.PATTERN_SCREEN_ENABLED != 'false' && github.event.inputs.mode != 'market-only'
         env:
@@ -77,7 +77,7 @@ jobs:
       
       - name: 执行股票分析
         env:
-          # 图片八形态股票池只作用于本次运行，不覆盖持久STOCK_LIST。
+          # 形态规则股票池只作用于本次运行，不覆盖持久STOCK_LIST。
           MODE: ${{ github.event.inputs.mode || 'full' }}
           PATTERN_SCREEN_ACTIVE: ${{ vars.PATTERN_SCREEN_ENABLED != 'false' && github.event.inputs.mode != 'market-only' }}
           PATTERN_STOCKS: ${{ steps.patterns.outputs.stock_codes }}
@@ -422,12 +422,12 @@ jobs:
             fi
             if [ "$PATTERN_HAS_CANDIDATES" = "true" ] && [ -n "$PATTERN_STOCKS" ]; then
               export STOCK_LIST="$PATTERN_STOCKS"
-              echo "本次使用图片八形态候选股票池：$STOCK_LIST"
+              echo "本次使用形态规则候选股票池：$STOCK_LIST"
             elif [ "$MODE" = "full" ]; then
-              echo "本次没有八形态候选，仅执行大盘复盘。"
+              echo "本次没有形态候选，仅执行大盘复盘。"
               MODE="market-only"
             else
-              echo "本次没有八形态候选，跳过个股分析。"
+              echo "本次没有形态候选，跳过个股分析。"
               exit 0
             fi
           fi

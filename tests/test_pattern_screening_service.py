@@ -1,11 +1,13 @@
 """筛选结果到股票池的端到端离线检查。"""
 from datetime import date
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from src.services.pattern_screening_service import screen_market, write_result
+from src.pattern_screener import RULESET_VERSION, VOLUME_BREAKOUT_LIMITS, VOLUME_BREAKOUT_NAME, detect_patterns
+from src.services.pattern_screening_service import rank_candidates, screen_market, write_result
 
 
 AS_OF = date(2026, 10, 12)
@@ -83,3 +85,55 @@ def test_invalid_quote_is_excluded_before_history_lookup():
     result = screen_market(provider, AS_OF)
     assert result["eligible_count"] == 0
     assert result["excluded"] == {"无效报价": 1}
+
+
+def test_real_volume_breakout_enters_daily_stock_pool_with_versioned_evidence(tmp_path):
+    class HistoricalProvider(FakeProvider):
+        def get_universe(self):
+            return [{"code": "002727", "name": "一心堂", "open": 11.67, "price": 12.46,
+                     "amount": 405798470.16, "volume": 33122800}]
+
+        def get_daily_data(self, code, as_of):
+            return pd.read_csv(Path(__file__).parent / "fixtures/patterns/yxt_002727_20261014.csv")
+
+    provider = HistoricalProvider()
+    as_of = date(2026, 10, 14)
+    assert detect_patterns(provider.get_daily_data("002727", as_of), as_of, include_extensions=False) == []
+    result = screen_market(provider, as_of)
+    assert result["status"] == "complete" and result["coverage"] == 1
+    assert result["ruleset_version"] == RULESET_VERSION
+    assert result["parameters"]["volume_breakout"] == VOLUME_BREAKOUT_LIMITS
+    candidate = result["selected"][0]
+    assert candidate["code"] == "002727" and candidate["priority_count"] == 1
+    assert [signal["name"] for signal in candidate["signals"]] == [VOLUME_BREAKOUT_NAME]
+    assert candidate["signals"][0]["evidence"]["突破前20日高点"] == 11.98
+    write_result(result, tmp_path)
+    assert (tmp_path / "stocks.txt").read_text() == "002727"
+    rendered = (tmp_path / "report.html").read_text()
+    assert RULESET_VERSION in rendered and VOLUME_BREAKOUT_NAME in rendered
+    assert 'href="https://xueqiu.com/S/SZ002727">一心堂' in rendered
+    assert '<svg' not in rendered and 'stock-chart' not in rendered
+
+
+def test_extension_confers_eligibility_without_duplicating_original_pattern_priority():
+    def candidate(code, names, volume):
+        return {"code": code, "signals": [{"name": name} for name in names], "volume_ratio": volume}
+
+    candidates = [
+        candidate("000001", ["老鸭头", "黄金坑"], 1),
+        candidate("000002", ["黄金坑", VOLUME_BREAKOUT_NAME], 1.5),
+        candidate("000003", ["黄金坑"], 2),
+        candidate("000004", [VOLUME_BREAKOUT_NAME], 3),
+    ]
+    ranked = rank_candidates(candidates)
+    assert [item["code"] for item in ranked] == ["000001", "000004", "000003", "000002"]
+    assert [item["priority_count"] for item in ranked] == [2, 1, 1, 1]
+
+
+def test_original_only_ranking_remains_count_then_volume_then_code():
+    candidates = [
+        {"code": "600001", "signals": [{"name": "黄金坑"}], "volume_ratio": 3},
+        {"code": "000001", "signals": [{"name": "黄金坑"}], "volume_ratio": 3},
+        {"code": "600002", "signals": [{"name": "黄金坑"}, {"name": "多方炮"}], "volume_ratio": 2},
+    ]
+    assert [item["code"] for item in rank_candidates(candidates)] == ["600002", "000001", "600001"]

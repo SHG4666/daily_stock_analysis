@@ -1,4 +1,4 @@
-"""用户八形态图的日 K 量化近似，只产生待复核候选，不预测收益。"""
+"""原图八形态与扩展放量突破规则，只产生待复核候选，不预测收益。"""
 from dataclasses import asdict, dataclass
 from datetime import date
 
@@ -6,10 +6,27 @@ import numpy as np
 import pandas as pd
 
 
-PATTERN_NAMES = (
+BASE_PATTERN_NAMES = (
     "老鸭头", "黄金坑", "空中加油", "底部红三兵",
     "杯柄形态", "一阳穿多线", "多方炮", "圆弧底",
 )
+VOLUME_BREAKOUT_NAME = "均线上方放量突破"
+PATTERN_NAMES = BASE_PATTERN_NAMES + (VOLUME_BREAKOUT_NAME,)
+RULESET_VERSION = "2.0-volume-breakout"
+VOLUME_BREAKOUT_LIMITS = {
+    "volume_ratio_min": 2.0,
+    "body_return_min": .03,
+    "daily_return_min": .03,
+    "resistance_sessions": 20,
+    "breakout_margin_min": .005,
+    "close_position_min": .75,
+    "body_share_min": .50,
+    "prior_ma_spread_max": .05,
+    "ma20_deviation_max": .15,
+    "five_session_return_max": .20,
+    "positive_open_gap_max": .05,
+    "prior_ma20_slope_sessions": 3,
+}
 
 
 class ScreeningDataError(ValueError):
@@ -79,7 +96,69 @@ def _curve(values):
     return rounded, r2, minimum, depth, dwell
 
 
-def detect_patterns(bars: pd.DataFrame, as_of: date) -> list[PatternSignal]:
+def _inspect_volume_breakout(frame, ma):
+    """背景只用昨日以前，突破确认用当日完整K线；门槛为初始假设。"""
+    limits = VOLUME_BREAKOUT_LIMITS
+    current, previous = frame.iloc[-1], frame.iloc[-2]
+    previous_mas = [series.iloc[-2] for series in ma.values()]
+    today_mas = [series.iloc[-1] for series in ma.values()]
+    ratio = volume_ratio(frame)
+    body_return = float(current.close / current.open - 1)
+    daily_return = float(current.close / previous.close - 1)
+    candle_range = float(current.high - current.low)
+    close_position = float((current.close - current.low) / candle_range) if candle_range > 0 else 0
+    body_share = float((current.close - current.open) / candle_range) if candle_range > 0 else 0
+    resistance = float(frame.high.iloc[-limits["resistance_sessions"] - 1:-1].max())
+    breakout = float(current.close / resistance - 1)
+    ma_spread = float(max(previous_mas) / min(previous_mas) - 1)
+    slope = float(ma[20].iloc[-2] / ma[20].iloc[-2 - limits["prior_ma20_slope_sessions"]] - 1)
+    deviation = float(current.close / ma[20].iloc[-1] - 1)
+    five_return = float(current.close / frame.close.iloc[-6] - 1)
+    open_gap = float(current.open / previous.close - 1)
+    checks = {
+        "前收站上昨日四线": previous.close > max(previous_mas),
+        "今开站上昨日四线": current.open > max(previous_mas),
+        "今收站上今日四线": current.close > max(today_mas),
+        "短均线向上": (ma[5].iloc[-2] > ma[10].iloc[-2]
+                     and ma[5].iloc[-1] > ma[5].iloc[-2] and ma[10].iloc[-1] > ma[10].iloc[-2]),
+        "突破前MA20走平或抬升": slope >= 0,
+        "突破前四线收敛": ma_spread <= limits["prior_ma_spread_max"],
+        "阳线实体足够": body_return >= limits["body_return_min"],
+        "当日涨幅足够": daily_return >= limits["daily_return_min"],
+        "放量确认": ratio >= limits["volume_ratio_min"],
+        "收盘有效突破20日高点": breakout >= limits["breakout_margin_min"],
+        "收盘接近当日最高": close_position >= limits["close_position_min"],
+        "实体占比足够": body_share >= limits["body_share_min"],
+        "MA20乖离受控": deviation <= limits["ma20_deviation_max"],
+        "5日涨幅受控": five_return <= limits["five_session_return_max"],
+        "正跳空幅度受控": open_gap <= limits["positive_open_gap_max"],
+    }
+    return {
+        "matched": bool(all(checks.values())),
+        "checks": {key: bool(value) for key, value in checks.items()},
+        "evidence": {
+            "突破前20日高点": round(resistance, 3),
+            "突破幅度百分比": round(breakout * 100, 2),
+            "阳线实体百分比": round(body_return * 100, 2),
+            "当日涨幅百分比": round(daily_return * 100, 2),
+            "量比（此前20日）": round(ratio, 2),
+            "收盘位置百分比": round(close_position * 100, 2),
+            "MA20乖离百分比": round(deviation * 100, 2),
+            "5日累计涨幅百分比": round(five_return * 100, 2),
+            "突破前MA20三日变化百分比": round(slope * 100, 2),
+            "开盘跳空百分比": round(open_gap * 100, 2),
+        },
+    }
+
+
+def inspect_volume_breakout(bars: pd.DataFrame, as_of: date) -> dict:
+    """返回同一检测逻辑的逐条件解释，供离线样本复算，不联网。"""
+    frame = prepare_bars(bars, as_of)
+    ma = {window: frame.close.rolling(window).mean() for window in (5, 10, 20, 30)}
+    return _inspect_volume_breakout(frame, ma)
+
+
+def detect_patterns(bars: pd.DataFrame, as_of: date, *, include_extensions=True) -> list[PatternSignal]:
     frame = prepare_bars(bars, as_of)
     close, high, low, volume = (frame[column] for column in ("close", "high", "low", "volume"))
     current = frame.iloc[-1]
@@ -220,4 +299,8 @@ def detect_patterns(bars: pd.DataFrame, as_of: date) -> list[PatternSignal]:
             emit("圆弧底", 形态天数=width, 弧形拟合R2=round(r2, 2),
                  底部持续天数=dwell, 突破价=round(resistance, 3))
             break
+    if include_extensions:
+        extension = _inspect_volume_breakout(frame, ma)
+        if extension["matched"]:
+            emit(VOLUME_BREAKOUT_NAME, **extension["evidence"])
     return matches

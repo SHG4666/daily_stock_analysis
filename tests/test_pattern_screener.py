@@ -115,6 +115,12 @@ def rounded_bottom():
     return make_bars(np.r_[curve, 12.4], np.r_[np.full(90, 1000), 2000])
 
 
+def volume_breakout():
+    frame = make_bars(np.r_[np.linspace(10, 10.5, 40), 11], [3000])
+    set_candle(frame, -1, 10.51, 11, 3000)
+    return frame
+
+
 POSITIVE_CASES = {
     "老鸭头": duck_head,
     "黄金坑": golden_pit,
@@ -124,6 +130,7 @@ POSITIVE_CASES = {
     "一阳穿多线": cross_multiple_mas,
     "多方炮": bullish_cannon,
     "圆弧底": rounded_bottom,
+    "均线上方放量突破": volume_breakout,
 }
 
 

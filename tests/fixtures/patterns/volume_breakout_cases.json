@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"code": "002727", "name": "一心堂", "csv": "yxt_002727_20261014.csv", "as_of": "2026-10-12", "expected_extension": false},
+    {"code": "002727", "name": "一心堂", "csv": "yxt_002727_20261014.csv", "as_of": "2026-10-13", "expected_extension": false},
+    {"code": "002727", "name": "一心堂", "csv": "yxt_002727_20261014.csv", "as_of": "2026-10-14", "expected_extension": true}
+  ]
+}

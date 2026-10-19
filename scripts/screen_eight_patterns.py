@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""收盘后全市场八形态筛选；独立运行不会调用AI或发送通知。"""
+"""收盘后按原图八形态和扩展突破规则筛选；独立运行不调用AI或发送通知。"""
 import argparse
 import logging
 import math
@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from data_provider.pattern_market_data import PatternMarketData
 from data_provider.shareholder_count import ShareholderCountProvider
 from src.core.trading_calendar import get_effective_trading_date, get_market_now, is_market_open
+from src.pattern_screener import RULESET_VERSION
 from src.services.pattern_screening_service import enrich_shareholder_counts, screen_market, write_result
 
 
@@ -43,6 +44,7 @@ def write_github_outputs(result):
 def empty_result(status, as_of, issue=None):
     return {
         "status": status, "as_of": as_of.isoformat(), "selected": [], "candidates": [],
+        "ruleset_version": RULESET_VERSION,
         "data_issues": {issue: 1} if issue else {}, "coverage": 0,
         "universe_source": PatternMarketData.universe_source,
         "universe_url": PatternMarketData.universe_url,
