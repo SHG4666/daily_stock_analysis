@@ -331,6 +331,10 @@ def parse_arguments() -> argparse.Namespace:
         action='store_true',
         help='跳过交易日检查，强制执行全量分析（Issue #373）'
     )
+    parser.add_argument(
+        '--completed-session',
+        help='定时延迟至次日09:00前时使用的上一完整A股交易日（YYYY-MM-DD）',
+    )
 
     parser.add_argument(
         '--webui',
@@ -421,7 +425,7 @@ def _compute_trading_day_filter(
         - should_skip_all: skip entire run when no stocks and no market review to run
     """
     force_run = getattr(args, 'force_run', False)
-    if force_run or not getattr(config, 'trading_day_check_enabled', True):
+    if force_run or getattr(args, 'completed_session', None) or not getattr(config, 'trading_day_check_enabled', True):
         return (stock_codes, None, False)
 
     from src.core.trading_calendar import (
@@ -501,6 +505,9 @@ def run_full_analysis(
     from src.core.market_review import run_market_review
     from src.core.pipeline import StockAnalysisPipeline
 
+    completed_session = _resolve_completed_session(args)
+    session_kwargs = {"completed_session": completed_session} if completed_session is not None else {}
+
     try:
         _refresh_stock_index_cache_for_analysis(config)
 
@@ -545,8 +552,20 @@ def run_full_analysis(
             max_workers=args.workers,
             query_id=query_id,
             query_source="cli",
-            save_context_snapshot=save_context_snapshot
+            save_context_snapshot=save_context_snapshot,
+            **session_kwargs,
         )
+
+        # Capture the previous close's market overview before individual-stock
+        # work can run into the next opening/auction window.
+        market_report = ""
+        if completed_session is not None and config.market_review_enabled and not args.no_market_review:
+            market_report = _run_market_review_with_shared_lock(
+                config, run_market_review, notifier=pipeline.notifier,
+                analyzer=pipeline.analyzer, search_service=pipeline.search_service,
+                send_notification=not args.no_notify, merge_notification=merge_notification,
+                override_region=effective_region, **session_kwargs,
+            ) or ""
 
         # 1. 运行个股分析
         results = pipeline.run(
@@ -555,6 +574,8 @@ def run_full_analysis(
             send_notification=not args.no_notify,
             merge_notification=merge_notification
         )
+        if completed_session and stock_codes and not args.dry_run and not results:
+            raise RuntimeError("延迟运行的个股分析均失败，不能视为已完成")
 
         # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟
         analysis_delay = getattr(config, 'analysis_delay', 0)
@@ -568,11 +589,11 @@ def run_full_analysis(
             time.sleep(analysis_delay)
 
         # 2. 运行大盘复盘（如果启用且不是仅个股模式）
-        market_report = ""
         if (
             config.market_review_enabled
             and not args.no_market_review
             and effective_region != ''
+            and completed_session is None
         ):
             review_result = _run_market_review_with_shared_lock(
                 config,
@@ -597,10 +618,13 @@ def run_full_analysis(
                 dashboard_content = pipeline.notifier.generate_aggregate_report(
                     results,
                     getattr(config, 'report_type', 'simple'),
+                    **({"report_date": completed_session.isoformat()} if completed_session else {}),
                 )
                 parts.append(f"# 🚀 个股决策仪表盘\n\n{dashboard_content}")
             if parts:
                 combined_content = "\n\n---\n\n".join(parts)
+                if completed_session:
+                    combined_content = pipeline._with_completed_session_notice(combined_content)
                 if pipeline.notifier.is_available():
                     if pipeline.notifier.send(combined_content, email_send_to_all=True, route_type="report"):
                         logger.info("已合并推送（个股+大盘复盘）")
@@ -644,10 +668,13 @@ def run_full_analysis(
                     dashboard_content = pipeline.notifier.generate_aggregate_report(
                         results,
                         getattr(config, 'report_type', 'simple'),
+                        **({"report_date": completed_session.isoformat()} if completed_session else {}),
                     )
                     full_content += f"# 🚀 个股决策仪表盘\n\n{dashboard_content}"
 
                 # 3. 创建文档
+                if completed_session:
+                    full_content = pipeline._with_completed_session_notice(full_content)
                 doc_url = feishu_doc.create_daily_doc(doc_title, full_content)
                 if doc_url:
                     logger.info(f"飞书云文档创建成功: {doc_url}")
@@ -683,6 +710,17 @@ def run_full_analysis(
 
     except Exception as e:
         logger.exception(f"分析流程执行失败: {e}")
+        if completed_session is not None:
+            raise
+
+
+def _resolve_completed_session(args):
+    value = getattr(args, "completed_session", None)
+    if not value:
+        return None
+    from src.core.screening_session import validate_completed_session
+    from src.core.trading_calendar import get_market_now
+    return validate_completed_session(str(value), get_market_now("cn"), os.getenv("GITHUB_EVENT_NAME", ""))
 
 
 def start_api_server(host: str, port: int, config: Config) -> None:
@@ -839,6 +877,12 @@ def main() -> int:
     for warning in warnings:
         logger.warning(warning)
 
+    try:
+        completed_session = _resolve_completed_session(args)
+    except ValueError as exc:
+        logger.error("延迟运行日期无效：%s", exc)
+        return 2
+
     if getattr(args, "check_notify", False):
         from src.services.notification_diagnostics import (
             format_notification_diagnostics,
@@ -931,7 +975,8 @@ def main() -> int:
             # config.market_review_enabled, which would wrongly block an
             # explicit --market-review invocation when the flag is disabled.
             effective_region = None
-            if not getattr(args, 'force_run', False) and getattr(config, 'trading_day_check_enabled', True):
+            if (not completed_session and not getattr(args, 'force_run', False)
+                    and getattr(config, 'trading_day_check_enabled', True)):
                 from src.core.trading_calendar import get_open_markets_today, compute_effective_region as _compute_region
                 open_markets = get_open_markets_today()
                 effective_region = _compute_region(
@@ -944,7 +989,7 @@ def main() -> int:
             logger.info("模式: 仅大盘复盘")
             notifier, analyzer, search_service = build_market_review_runtime(config)
 
-            _run_market_review_with_shared_lock(
+            review_result = _run_market_review_with_shared_lock(
                 config,
                 run_market_review,
                 notifier=notifier,
@@ -952,7 +997,10 @@ def main() -> int:
                 search_service=search_service,
                 send_notification=not args.no_notify,
                 override_region=effective_region,
+                **({"completed_session": completed_session} if completed_session else {}),
             )
+            if completed_session and not review_result:
+                return 1
             return 0
 
         # 模式2: 定时任务模式

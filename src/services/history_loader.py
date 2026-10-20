@@ -26,6 +26,21 @@ _CACHE_MIN_RECORDS = 30
 _frozen_target_date: contextvars.ContextVar[Optional[date]] = contextvars.ContextVar(
     "_frozen_target_date", default=None,
 )
+_completed_session: contextvars.ContextVar[Optional[date]] = contextvars.ContextVar(
+    "_completed_session", default=None,
+)
+
+
+def set_completed_session(d: Optional[date]) -> contextvars.Token:
+    return _completed_session.set(d)
+
+
+def get_completed_session() -> Optional[date]:
+    return _completed_session.get()
+
+
+def reset_completed_session(token: contextvars.Token) -> None:
+    _completed_session.reset(token)
 
 
 def set_frozen_target_date(d: date) -> contextvars.Token:
@@ -142,6 +157,9 @@ def load_history_df(
     else:
         frozen = get_frozen_target_date()
         end = frozen if frozen else date.today()
+    completed = get_completed_session()
+    if completed is not None:
+        end = min(end, completed)
 
     # Calendar-day buffer: ~1.8x trading days + margin for long holidays
     start = end - timedelta(days=int(days * 1.8) + 10)
@@ -165,8 +183,14 @@ def load_history_df(
     # --- 2. Network fallback via singleton DataFetcherManager -------------
     try:
         manager = _get_fetcher_manager()
-        df, source = manager.get_daily_data(stock_code, days=days)
+        kwargs = {"end_date": end.isoformat()} if completed is not None else {}
+        df, source = manager.get_daily_data(stock_code, days=days, **kwargs)
         if df is not None and not df.empty:
+            if completed is not None:
+                dates = pd.to_datetime(df["date"], errors="raise").dt.date
+                df = df.loc[dates <= end].copy()
+                if df.empty:
+                    return None, "none"
             return df, source
     except Exception as e:
         logger.warning("load_history_df(%s): DataFetcherManager failed: %s", stock_code, e)

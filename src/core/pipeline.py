@@ -106,6 +106,7 @@ class StockAnalysisPipeline:
         analysis_skills: Optional[List[str]] = None,
         analysis_phase: str = "auto",
         portfolio_context: Optional[Dict[str, Any]] = None,
+        completed_session: Optional[date] = None,
     ):
         """
         初始化调度器
@@ -127,6 +128,7 @@ class StockAnalysisPipeline:
         self.analysis_skills = list(analysis_skills) if analysis_skills is not None else None
         self.analysis_phase = analysis_phase or "auto"
         self.portfolio_context = dict(portfolio_context) if isinstance(portfolio_context, dict) else None
+        self.completed_session = completed_session
         
         # 初始化各模块
         self.db = get_db()
@@ -239,7 +241,7 @@ class StockAnalysisPipeline:
             # 首先获取股票名称
             stock_name = self.fetcher_manager.get_stock_name(code, allow_realtime=False)
 
-            target_date = self._resolve_resume_target_date(
+            target_date = getattr(self, "completed_session", None) or self._resolve_resume_target_date(
                 code, current_time=current_time
             )
 
@@ -252,10 +254,17 @@ class StockAnalysisPipeline:
 
             # 从数据源获取数据
             logger.info(f"{stock_name}({code}) 开始从数据源获取数据...")
-            df, source_name = self.fetcher_manager.get_daily_data(code, days=30)
+            completed = getattr(self, "completed_session", None)
+            date_kwargs = {"end_date": completed.isoformat()} if completed is not None else {}
+            df, source_name = self.fetcher_manager.get_daily_data(code, days=30, **date_kwargs)
 
             if df is None or df.empty:
                 return False, "获取数据为空"
+            if completed is not None:
+                dates = pd.to_datetime(df["date"], errors="raise").dt.date
+                df = df.loc[dates <= completed].copy()
+                if df.empty or pd.to_datetime(df["date"]).dt.date.max() != completed:
+                    return False, "缺少指定完整交易日行情"
 
             # 保存到数据库
             saved_count = self.db.save_daily_data(df, code, source_name)
@@ -308,6 +317,12 @@ class StockAnalysisPipeline:
                 analysis_phase=getattr(self, "analysis_phase", "auto"),
             )
             market_phase_context_dict = market_phase_context.to_dict()
+            completed = getattr(self, "completed_session", None)
+            if completed is not None:
+                market_phase_context_dict["completed_session"] = completed.isoformat()
+                market_phase_context_dict.setdefault("warnings", []).append(
+                    f"定时延迟运行：行情截至{completed.isoformat()}，资讯查询到实际生成时刻，非历史回测。"
+                )
             market_phase_summary = render_market_phase_summary(market_phase_context_dict)
 
             self._emit_progress(18, f"{code}：正在获取行情与筹码数据")
@@ -317,7 +332,7 @@ class StockAnalysisPipeline:
             # Step 1: 获取实时行情（量比、换手率等）- 使用统一入口，自动故障切换
             realtime_quote = None
             try:
-                if self.config.enable_realtime_quote:
+                if self.config.enable_realtime_quote and completed is None:
                     realtime_quote = self.fetcher_manager.get_realtime_quote(code, log_final_failure=False)
                     if realtime_quote:
                         # 使用实时行情返回的真实股票名称
@@ -343,7 +358,7 @@ class StockAnalysisPipeline:
             # Step 2: 获取筹码分布 - 使用统一入口，带熔断保护
             chip_data = None
             try:
-                chip_data = self.fetcher_manager.get_chip_distribution(code)
+                chip_data = self.fetcher_manager.get_chip_distribution(code) if completed is None else None
                 if chip_data:
                     logger.info(f"{stock_name}({code}) 筹码分布: 获利比例={chip_data.profit_ratio:.1%}, "
                               f"90%集中度={chip_data.concentration_90:.2%}")
@@ -503,7 +518,11 @@ class StockAnalysisPipeline:
 
             # Step 5: 获取分析上下文（技术面数据）
             self._emit_progress(58, f"{stock_name}：正在整理分析上下文")
-            context = self.db.get_analysis_context(code)
+            context_kwargs = {"target_date": completed} if completed is not None else {}
+            context = self.db.get_analysis_context(code, **context_kwargs)
+            if completed is not None and (not context or context.get("date") != completed.isoformat()):
+                logger.error("[%s] 延迟运行缺少 %s 的完整行情上下文，停止该股分析", code, completed)
+                return None
 
             if context is None:
                 logger.warning(f"{stock_name}({code}) 无法获取历史行情数据，将仅基于新闻和实时行情分析")
@@ -980,8 +999,13 @@ class StockAnalysisPipeline:
             logger.debug("[%s] Agent history: %d bars in DB, sufficient", code, len(bars))
             return
         try:
-            df, source = self.fetcher_manager.get_daily_data(code, days=min_days)
+            completed = getattr(self, "completed_session", None)
+            kwargs = {"end_date": target.isoformat()} if completed is not None else {}
+            df, source = self.fetcher_manager.get_daily_data(code, days=min_days, **kwargs)
             if df is not None and not df.empty:
+                if completed is not None:
+                    dates = pd.to_datetime(df["date"], errors="raise").dt.date
+                    df = df.loc[dates <= target].copy()
                 self.db.save_daily_data(df, code, source)
                 logger.info("[%s] Prefetched %d rows of history for agent (source: %s)", code, len(df), source)
         except Exception as e:
@@ -1243,7 +1267,9 @@ class StockAnalysisPipeline:
     def _load_agent_analysis_context(self, code: str, stock_name: str) -> Dict[str, Any]:
         """Load daily-bar context for Agent pack summaries without blocking analysis."""
         try:
-            context = self.db.get_analysis_context(code)
+            completed = getattr(self, "completed_session", None)
+            kwargs = {"target_date": completed} if completed is not None else {}
+            context = self.db.get_analysis_context(code, **kwargs)
         except Exception as exc:
             logger.warning(
                 "[%s] Agent analysis context load failed; daily_bars will be marked missing: %s",
@@ -2215,9 +2241,13 @@ class StockAnalysisPipeline:
         """
         logger.info(f"========== 开始处理 {code} ==========")
 
-        from src.services.history_loader import set_frozen_target_date, reset_frozen_target_date
-        frozen_td = self._resolve_resume_target_date(code, current_time=current_time)
+        from src.services.history_loader import (
+            set_frozen_target_date, reset_frozen_target_date, set_completed_session, reset_completed_session,
+        )
+        completed = getattr(self, "completed_session", None)
+        frozen_td = completed or self._resolve_resume_target_date(code, current_time=current_time)
         token = set_frozen_target_date(frozen_td)
+        completed_token = set_completed_session(completed)
         effective_query_id = analysis_query_id or getattr(self, "query_id", None) or uuid.uuid4().hex
         effective_trace_id = getattr(self, "trace_id", None) or effective_query_id
         diag_token = None
@@ -2237,6 +2267,8 @@ class StockAnalysisPipeline:
             
             if not success:
                 logger.warning(f"[{code}] 数据获取失败: {error}")
+                if completed is not None:
+                    return None
                 # 即使获取失败，也尝试用已有数据分析
             else:
                 self._emit_progress(16, f"{code}：行情数据准备完成")
@@ -2276,6 +2308,7 @@ class StockAnalysisPipeline:
             logger.exception(f"[{code}] 处理过程发生未知异常: {e}")
             return None
         finally:
+            reset_completed_session(completed_token)
             reset_run_diagnostic_context(diag_token)
             reset_frozen_target_date(token)
     
@@ -2324,7 +2357,7 @@ class StockAnalysisPipeline:
         
         # === 批量预取实时行情（优化：避免每只股票都触发全量拉取）===
         # 只有股票数量 >= 5 时才进行预取，少量股票直接逐个查询更高效
-        if len(stock_codes) >= 5:
+        if len(stock_codes) >= 5 and getattr(self, "completed_session", None) is None:
             prefetch_count = self.fetcher_manager.prefetch_realtime_quotes(stock_codes)
             if prefetch_count > 0:
                 logger.info(f"已启用批量预取架构：一次拉取全市场数据，{len(stock_codes)} 只股票共享缓存")
@@ -2484,15 +2517,19 @@ class StockAnalysisPipeline:
 
         with notify_lock:
             try:
+                completed = getattr(self, "completed_session", None)
+                date_kwargs = {"report_date": completed.isoformat()} if completed is not None else {}
                 if report_type == ReportType.FULL:
-                    report_content = self.notifier.generate_dashboard_report([result])
+                    report_content = self.notifier.generate_dashboard_report([result], **date_kwargs)
                     logger.info(f"[{stock_code}] 使用完整报告格式")
                 elif report_type == ReportType.BRIEF:
-                    report_content = self.notifier.generate_brief_report([result])
+                    report_content = self.notifier.generate_brief_report([result], **date_kwargs)
                     logger.info(f"[{stock_code}] 使用简洁报告格式")
                 else:
                     report_content = self.notifier.generate_single_stock_report(result)
                     logger.info(f"[{stock_code}] 使用精简报告格式")
+
+                report_content = self._with_completed_session_notice(report_content)
 
                 sent = self.notifier.send(
                     report_content,
@@ -2734,10 +2771,13 @@ class StockAnalysisPipeline:
                 wechat_success = False
                 if NotificationChannel.WECHAT in channels:
                     def _send_wechat_report() -> bool:
+                        completed = getattr(self, "completed_session", None)
+                        date_kwargs = {"report_date": completed.isoformat()} if completed is not None else {}
                         if report_type == ReportType.BRIEF:
-                            dashboard_content = self.notifier.generate_brief_report(results)
+                            dashboard_content = self.notifier.generate_brief_report(results, **date_kwargs)
                         else:
-                            dashboard_content = self.notifier.generate_wechat_dashboard(results)
+                            dashboard_content = self.notifier.generate_wechat_dashboard(results, **date_kwargs)
+                        dashboard_content = self._with_completed_session_notice(dashboard_content)
                         logger.info(f"企业微信仪表盘长度: {len(dashboard_content)} 字符")
                         logger.debug(f"企业微信推送内容:\n{dashboard_content}")
                         wechat_image_bytes = None
@@ -3087,9 +3127,22 @@ class StockAnalysisPipeline:
         report_type: ReportType,
     ) -> str:
         """Generate aggregate report with backward-compatible notifier fallback."""
+        completed = getattr(self, "completed_session", None)
+        kwargs = {"report_date": completed.isoformat()} if completed is not None else {}
         generator = getattr(self.notifier, "generate_aggregate_report", None)
         if callable(generator):
-            return generator(results, report_type)
+            report = generator(results, report_type, **kwargs)
+            return self._with_completed_session_notice(report)
         if report_type == ReportType.BRIEF and hasattr(self.notifier, "generate_brief_report"):
-            return self.notifier.generate_brief_report(results)
-        return self.notifier.generate_dashboard_report(results)
+            report = self.notifier.generate_brief_report(results, **kwargs)
+        else:
+            report = self.notifier.generate_dashboard_report(results, **kwargs)
+        return self._with_completed_session_notice(report)
+
+    def _with_completed_session_notice(self, report: str) -> str:
+        completed = getattr(self, "completed_session", None)
+        if completed is None:
+            return report
+        generated = get_market_now("cn").isoformat(timespec="seconds")
+        return (f"> 定时延迟运行 · 行情截至 {completed.isoformat()} · 生成 {generated}。"
+                "资讯按生成时刻查询，非历史回测。\n\n" + report)

@@ -12,7 +12,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, Optional
 import uuid
 
@@ -94,6 +94,7 @@ def run_market_review(
     override_region: Optional[str] = None,
     query_id: Optional[str] = None,
     return_structured: bool = False,
+    completed_session: Optional[date] = None,
 ) -> Optional[str] | Optional[MarketReviewRunResult]:
     """
     执行大盘复盘分析
@@ -120,6 +121,12 @@ def run_market_review(
         else (getattr(runtime_config, 'market_review_region', 'cn') or 'cn')
     )
     run_markets = _resolve_market_review_regions(raw_region)
+    if completed_session is not None:
+        if run_markets != ["cn"]:
+            logger.warning("定时延迟运行仅处理已收盘A股复盘，跳过其他市场")
+        run_markets = [market for market in run_markets if market == "cn"]
+        if not run_markets:
+            return None
     persist_region = ','.join(run_markets) if len(run_markets) > 1 else run_markets[0]
 
     try:
@@ -159,6 +166,7 @@ def run_market_review(
                 analyzer=analyzer,
                 region=run_region,
                 config=runtime_config,
+                **({"completed_session": completed_session} if completed_session else {}),
             )
             review_result = market_analyzer.run_daily_review_with_snapshot()
             review_report = review_result.report
@@ -179,12 +187,16 @@ def run_market_review(
                 language=getattr(runtime_config, "report_language", "zh"),
                 root_title=review_text["root_title"],
             )
+            if completed_session is not None:
+                from src.core.trading_calendar import get_market_now
+                market_review_payload["completed_session"] = completed_session.isoformat()
+                market_review_payload["generated_at"] = get_market_now("cn").isoformat(timespec="seconds")
             markdown_report = _render_market_review_payload_markdown(
                 market_review_payload,
                 wrapper_title=review_text["root_title"],
             )
             # 保存报告到文件
-            date_str = datetime.now().strftime('%Y%m%d')
+            date_str = completed_session.strftime('%Y%m%d') if completed_session else datetime.now().strftime('%Y%m%d')
             report_filename = f"market_review_{date_str}.md"
             filepath = notifier.save_report_to_file(
                 markdown_report,
@@ -290,6 +302,9 @@ def _render_market_review_payload_markdown(
 ) -> str:
     """Render Markdown from the structured market-review payload for file/push compatibility."""
     body = _render_market_review_payload_body(payload)
+    if payload.get("completed_session"):
+        body = (f"> 定时延迟运行 · A股行情截至 {payload['completed_session']} · "
+                f"生成 {payload.get('generated_at', '')}。资讯按生成时刻查询，非历史回测。\n\n" + body)
     if wrapper_title:
         return f"{wrapper_title}\n\n{body}".strip()
     return body.strip()
