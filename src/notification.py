@@ -1351,7 +1351,7 @@ class NotificationService(
         
         return "\n".join(report_lines)
     
-    def generate_wechat_dashboard(self, results: List[AnalysisResult]) -> str:
+    def generate_wechat_dashboard(self, results: List[AnalysisResult], report_date: Optional[str] = None) -> str:
         """
         生成企业微信决策仪表盘精简版（控制在4000字符内）
         
@@ -1366,20 +1366,19 @@ class NotificationService(
         config = get_config()
         report_language = self._get_report_language(results)
         labels = get_report_labels(report_language)
+        report_date = report_date or datetime.now().strftime('%Y-%m-%d')
         if getattr(config, 'report_renderer_enabled', False) and results:
             from src.services.report_renderer import render
             out = render(
                 platform='wechat',
                 results=results,
-                report_date=datetime.now().strftime('%Y-%m-%d'),
+                report_date=report_date,
                 summary_only=self._report_summary_only,
                 extra_context={"report_language": report_language},
             )
             if out:
                 return out
 
-        report_date = datetime.now().strftime('%Y-%m-%d')
-        
         # 按评分排序
         sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
         

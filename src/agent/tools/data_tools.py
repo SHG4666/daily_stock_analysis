@@ -234,6 +234,12 @@ def _compact_portfolio_risk(risk: dict, top_n: int = 10) -> dict:
 
 def _handle_get_realtime_quote(stock_code: str) -> dict:
     """Get real-time stock quote."""
+    from src.services.history_loader import get_completed_session
+    completed = get_completed_session()
+    if completed is not None:
+        return {"error": "Realtime quotes are disabled for a delayed completed-session run",
+                "retriable": False, "as_of": completed.isoformat(),
+                "note": "Use daily history up to as_of; never relabel an old quote as today's bar."}
     manager = _get_fetcher_manager()
     quote = manager.get_realtime_quote(stock_code)
     if quote is None:
@@ -370,6 +376,11 @@ get_daily_history_tool = ToolDefinition(
 
 def _handle_get_chip_distribution(stock_code: str) -> dict:
     """Get chip distribution data."""
+    from src.services.history_loader import get_completed_session
+    completed = get_completed_session()
+    if completed is not None:
+        return {"error": "Undated latest chip data is disabled for a delayed completed-session run",
+                "as_of": completed.isoformat(), "retriable": False}
     manager = _get_fetcher_manager()
     chip = manager.get_chip_distribution(stock_code)
 
@@ -414,8 +425,11 @@ get_chip_distribution_tool = ToolDefinition(
 
 def _handle_get_analysis_context(stock_code: str) -> dict:
     """Get stored analysis context from database."""
+    from src.services.history_loader import get_completed_session
+    completed = get_completed_session()
     db = _get_db()
-    context = db.get_analysis_context(stock_code)
+    kwargs = {"target_date": completed} if completed is not None else {}
+    context = db.get_analysis_context(stock_code, **kwargs)
 
     if context is None:
         return {"error": f"No analysis context in DB for {stock_code}"}

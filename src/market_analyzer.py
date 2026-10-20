@@ -123,6 +123,7 @@ class MarketAnalyzer:
         analyzer=None,
         region: str = "cn",
         config: Optional[Any] = None,
+        completed_session=None,
     ):
         """
         初始化大盘分析器
@@ -134,6 +135,7 @@ class MarketAnalyzer:
             config: 本次复盘使用的配置；未传时读取全局配置
         """
         self.config = config or get_config()
+        self.completed_session = completed_session
         self.search_service = search_service
         self.analyzer = analyzer
         self.data_manager = DataFetcherManager()
@@ -327,7 +329,15 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         Returns:
             MarketOverview: 市场概览数据对象
         """
-        today = datetime.now().strftime('%Y-%m-%d')
+        completed = getattr(self, "completed_session", None)
+        if completed is not None:
+            from src.core.screening_session import validate_completed_session
+            from src.core.trading_calendar import get_market_now
+            import os
+            if self.region != "cn":
+                raise ValueError("延迟完整交易日模式仅支持A股复盘")
+            validate_completed_session(completed.isoformat(), get_market_now("cn"), os.getenv("GITHUB_EVENT_NAME", ""))
+        today = completed.isoformat() if completed is not None else datetime.now().strftime('%Y-%m-%d')
         overview = MarketOverview(date=today)
         
         # 1. 获取主要指数行情（按 region 切换 A 股/美股）
@@ -343,6 +353,10 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         
         # 4. 获取北向资金（可选）
         # self._get_north_flow(overview)
+        if completed is not None:
+            # A slow provider must not cross into the next auction/open and have
+            # its new quote silently stamped with yesterday's date.
+            validate_completed_session(completed.isoformat(), get_market_now("cn"), os.getenv("GITHUB_EVENT_NAME", ""))
         
         return overview
 

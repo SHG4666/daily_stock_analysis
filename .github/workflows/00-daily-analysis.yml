@@ -82,6 +82,8 @@ jobs:
           PATTERN_SCREEN_ACTIVE: ${{ vars.PATTERN_SCREEN_ENABLED != 'false' && github.event.inputs.mode != 'market-only' }}
           PATTERN_STOCKS: ${{ steps.patterns.outputs.stock_codes }}
           PATTERN_HAS_CANDIDATES: ${{ steps.patterns.outputs.has_candidates }}
+          PATTERN_COMPLETED_SESSION: ${{ steps.patterns.outputs.as_of }}
+          PATTERN_DELAYED_SCHEDULE: ${{ steps.patterns.outputs.delayed_schedule }}
           PATTERN_SCREEN_STATUS: ${{ steps.patterns.outputs.status }}
           # ==========================================
           # AI 配置
@@ -500,6 +502,11 @@ jobs:
           
           # 构建命令行参数
           FORCE_RUN_ARG=""
+          COMPLETED_SESSION_ARGS=()
+          if [ "$PATTERN_DELAYED_SCHEDULE" = "true" ]; then
+            COMPLETED_SESSION_ARGS=(--completed-session "$PATTERN_COMPLETED_SESSION")
+            echo "定时延迟运行：使用已核验完整行情日 $PATTERN_COMPLETED_SESSION"
+          fi
           if [ "${{ github.event.inputs.force_run }}" = "true" ]; then
             FORCE_RUN_ARG="--force-run"
             echo "⚡ 已启用强制运行模式（跳过交易日检查）"
@@ -507,11 +514,11 @@ jobs:
 
           # 执行分析
           if [ "$MODE" = "market-only" ]; then
-            python main.py --market-review $FORCE_RUN_ARG
+            python main.py --market-review $FORCE_RUN_ARG "${COMPLETED_SESSION_ARGS[@]}"
           elif [ "$MODE" = "stocks-only" ]; then
-            python main.py --no-market-review $FORCE_RUN_ARG
+            python main.py --no-market-review $FORCE_RUN_ARG "${COMPLETED_SESSION_ARGS[@]}"
           else
-            python main.py $FORCE_RUN_ARG
+            python main.py $FORCE_RUN_ARG "${COMPLETED_SESSION_ARGS[@]}"
           fi
       
       - name: 上传分析报告

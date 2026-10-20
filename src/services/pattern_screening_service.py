@@ -215,6 +215,11 @@ def render_html(result):
     ruleset_version = escape(str(result.get("ruleset_version") or "历史报告未标注"))
     universe_scope = escape(str(result.get("universe_source") or ""))
     scope_line = f'<p class="muted">范围：{universe_scope}</p>' if universe_scope else ''
+    delay_line = ''
+    if result.get("delayed_schedule"):
+        generated_at = escape(str(result.get("generated_at") or ""))
+        delay_line = (f'<p class="muted">定时延迟运行 · 使用上一完整交易日行情；生成时间 {generated_at}。'
+                      '后续分析沿用同一行情日，资讯按实际生成时刻查询。</p>')
     no_candidates = '<p class="empty">本次没有符合条件的形态候选。</p>' if complete else '<p class="empty">本次数据尚不足以完成筛选，请查看数据异常统计。</p>'
     if result.get("status") == "market_closed":
         no_candidates = '<p class="empty">当前A股休市，未执行市场筛选，不生成今天的新候选。</p>'
@@ -224,6 +229,7 @@ def render_html(result):
 <main><div class="eyebrow">DAILY STOCK ANALYSIS / 技术形态筛选</div><h1>技术形态候选</h1>
 <p class="muted">行情截止 {escape(result['as_of'])} · 沪深京 A 股 · 规则版本 {ruleset_version} · 原图八形态及扩展突破规则。</p>
 {scope_line}
+{delay_line}
 <div class="status">{status} · 当日行情日期核验覆盖 {result.get('coverage',0):.1%}</div>
 <div class="stats"><div class="stat">市场股票<b>{result.get('universe_count',0):,}</b></div><div class="stat">基础条件通过<b>{result.get('eligible_count',0):,}</b></div><div class="stat">形态候选<b>{len(result.get('candidates',[]))}</b></div><div class="stat">交给现有分析<b>{len(result.get('selected',[]))}</b></div></div>
 <p class="muted">{exclusions}</p><h2>按形态查看</h2><nav>{buttons}</nav>

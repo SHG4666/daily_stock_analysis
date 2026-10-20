@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from data_provider.pattern_market_data import PatternMarketData
 from data_provider.shareholder_count import ShareholderCountProvider
 from src.core.trading_calendar import get_effective_trading_date, get_market_now, is_market_open
+from src.core.screening_session import is_delayed_schedule
 from src.pattern_screener import RULESET_VERSION
 from src.services.pattern_screening_service import enrich_shareholder_counts, screen_market, write_result
 
@@ -39,6 +40,8 @@ def write_github_outputs(result):
             stream.write("stock_codes=" + ",".join(stock["code"] for stock in result["selected"]) + "\n")
             stream.write("has_candidates=" + str(bool(result["selected"])).lower() + "\n")
             stream.write("status=" + result["status"] + "\n")
+            stream.write("as_of=" + result["as_of"] + "\n")
+            stream.write("delayed_schedule=" + str(bool(result.get("delayed_schedule"))).lower() + "\n")
 
 
 def empty_result(status, as_of, issue=None):
@@ -59,13 +62,15 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     now = get_market_now("cn")
     as_of = get_effective_trading_date("cn", current_time=now)
-    if not is_market_open("cn", now.date()):
+    event_name = os.getenv("GITHUB_EVENT_NAME", "")
+    delayed = is_delayed_schedule(now, as_of, event_name)
+    if not delayed and not is_market_open("cn", now.date()):
         result = empty_result("market_closed", as_of)
         write_result(result, args.output_dir)
         write_github_outputs(result)
         logging.info("A股休市，正常跳过，不生成今天的新候选")
         return 0
-    if as_of != now.date():
+    if not delayed and (as_of != now.date() or (event_name == "schedule" and now.hour < 9)):
         logging.error("仅在交易日收盘后筛选；最近完整行情日为 %s，本次不生成当日候选", as_of)
         return 2
     try:
@@ -73,6 +78,8 @@ def main(argv=None):
         result = screen_market(provider, as_of, top_n=args.top, workers=args.workers,
                                min_amount=args.min_amount, deadline_seconds=args.deadline,
                                min_coverage=args.min_coverage)
+        result["delayed_schedule"] = delayed
+        result["generated_at"] = now.isoformat()
         enrich_shareholder_counts(result, ShareholderCountProvider(), workers=args.workers)
         write_result(result, args.output_dir)
         write_github_outputs(result)

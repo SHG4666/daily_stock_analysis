@@ -24,6 +24,16 @@ from src.storage import DatabaseManager, StockDaily
 class GetLatestDataTestCase(unittest.TestCase):
     """get_latest_data 方法测试"""
 
+    def test_explicit_context_cutoff_excludes_newer_database_rows(self) -> None:
+        for offset in (0, 1, 2, 3):
+            self._insert_stock_data("600519", days_ago=offset, close=100 - offset)
+        cutoff = date.today() - timedelta(days=2)
+        context = self.db.get_analysis_context("600519", target_date=cutoff)
+        self.assertEqual(context["date"], cutoff.isoformat())
+        self.assertEqual(context["today"]["close"], 98)
+        self.assertEqual(context["yesterday"]["close"], 97)
+        self.assertEqual(self.db.get_analysis_context("600519")["today"]["close"], 100)
+
     def setUp(self) -> None:
         """Initialize an isolated database for each test case."""
         self._temp_dir = tempfile.TemporaryDirectory()
