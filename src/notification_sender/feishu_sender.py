@@ -16,11 +16,17 @@ import threading
 import time
 import uuid as uuid_mod
 from copy import deepcopy
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 import requests
 
 from src.config import Config
+from src.core.daily_delivery import (
+    daily_post_is_uncertain,
+    feishu_target_fingerprint,
+    record_daily_post,
+    run_daily_delivery,
+)
 from src.formatters import (
     MIN_MAX_BYTES,
     PAGE_MARKER_SAFE_BYTES,
@@ -108,6 +114,7 @@ class FeishuSender:
             )
             raw_domain = "feishu"
         self._feishu_domain = FEISHU_DOMAIN if raw_domain == "feishu" else LARK_DOMAIN
+        self._feishu_raw_domain = raw_domain
 
         self._app_client: Any = _NO_CLIENT
         self._app_client_lock = threading.Lock()
@@ -115,6 +122,22 @@ class FeishuSender:
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _record_post_response(status_code: Any, code: Any = None) -> None:
+        """Record transport evidence; the daily-delivery hook is otherwise a no-op.
+
+        A missing/malformed acknowledgement cannot establish that a POST failed
+        before delivery. In a daily scope that uncertainty must stop retries.
+        """
+        if isinstance(status_code, int) and not isinstance(status_code, bool):
+            if 400 <= status_code < 500:
+                record_daily_post("rejected")
+                return
+            if status_code == 200 and isinstance(code, int) and not isinstance(code, bool):
+                record_daily_post("ack" if code == 0 else "rejected")
+                return
+        record_daily_post("unknown")
 
     @staticmethod
     def _build_card_body(content: str) -> dict:
@@ -242,6 +265,8 @@ class FeishuSender:
             if not ok:
                 logger.error("App Bot 第 %d/%d 批发送失败", i + 1, len(chunks))
                 success = False
+                if daily_post_is_uncertain():
+                    return False
             if i < len(chunks) - 1:
                 time.sleep(1)
         return success
@@ -257,6 +282,8 @@ class FeishuSender:
 
         if self._app_send_raw(client, "interactive", card_payload):
             return True
+        if daily_post_is_uncertain():
+            return False
 
         # Fallback to plain text.
         text_payload = json.dumps({"text": content}, ensure_ascii=False)
@@ -297,10 +324,13 @@ class FeishuSender:
             try:
                 resp = client.im.v1.message.create(req)
             except Exception as e:
+                record_daily_post("unknown")
                 logger.warning(
                     "App Bot 发送异常 (attempt=%d/%d): %s: %s",
                     attempt + 1, _APP_SEND_RETRIES, type(e).__name__, e,
                 )
+                if daily_post_is_uncertain():
+                    return False
                 if attempt < _APP_SEND_RETRIES - 1:
                     time.sleep(
                         _APP_SEND_BACKOFF_SECONDS[
@@ -309,6 +339,12 @@ class FeishuSender:
                     )
                 continue
 
+            self._record_post_response(
+                getattr(getattr(resp, "raw", None), "status_code", None),
+                getattr(resp, "code", None),
+            )
+            if daily_post_is_uncertain():
+                return False
             if resp.success():
                 logger.info("App Bot 消息发送成功 (type=%s)", msg_type)
                 return True
@@ -341,7 +377,13 @@ class FeishuSender:
     # Public API
     # ------------------------------------------------------------------
 
-    def send_to_feishu(self, content: str, *, timeout_seconds: Optional[float] = None) -> bool:
+    def send_to_feishu(
+        self,
+        content: str,
+        *,
+        timeout_seconds: Optional[float] = None,
+        daily_components: Optional[Sequence[str]] = None,
+    ) -> bool:
         """
         Push a message to Feishu.
 
@@ -350,15 +392,30 @@ class FeishuSender:
           2. **App Bot** – when ``feishu_app_id`` + ``feishu_app_secret``
              + ``feishu_chat_id`` are all configured and webhook is absent.
 
+        ``daily_components`` opts a scheduled report into the configured durable
+        receipt guard. Ad-hoc calls retain the legacy retry/fallback behaviour.
+
         Returns:
             Whether the send succeeded.
         """
-        if content is None:
-            logger.error("send_to_feishu: content 不能为 None")
-            return False
-        if self._feishu_url:
-            return self._send_via_webhook(content, timeout_seconds=timeout_seconds)
-        return self._send_via_app_bot(content)
+        def send() -> bool:
+            if content is None:
+                logger.error("send_to_feishu: content 不能为 None")
+                return False
+            if self._feishu_url:
+                return self._send_via_webhook(content, timeout_seconds=timeout_seconds)
+            return self._send_via_app_bot(content)
+
+        if daily_components is None:
+            return send()
+        target = feishu_target_fingerprint(
+            self._feishu_url,
+            self._feishu_app_id,
+            self._feishu_receive_id_type,
+            self._feishu_chat_id,
+            self._feishu_raw_domain,
+        )
+        return run_daily_delivery(target, daily_components, send)
 
     def send_card_to_feishu(self, card: dict, *, timeout_seconds: Optional[float] = None) -> bool:
         """Send a structured card without treating a text fallback as chart delivery.
@@ -425,21 +482,28 @@ class FeishuSender:
                 verify=self._webhook_verify_ssl,
             )
         except requests.exceptions.RequestException as exc:
+            record_daily_post("unknown")
             # Exception text can contain the secret webhook URL.
             logger.error("飞书图表卡片网络请求异常: %s", type(exc).__name__)
             return False
         if response.status_code != 200:
+            self._record_post_response(response.status_code)
             logger.error("飞书图表卡片请求失败: HTTP %d", response.status_code)
             return False
         try:
             result = response.json()
         except (ValueError, AttributeError):
+            record_daily_post("unknown")
             logger.error("飞书图表卡片返回非 JSON 响应")
             return False
         if not isinstance(result, dict):
+            record_daily_post("unknown")
             logger.error("飞书图表卡片返回非预期格式: %s", type(result).__name__)
             return False
         code = result.get("code") if "code" in result else result.get("StatusCode")
+        self._record_post_response(response.status_code, code)
+        if daily_post_is_uncertain():
+            return False
         if code != 0:
             logger.error("飞书图表卡片返回错误 [code=%s]，未降级为纯文本", code)
             return False
@@ -498,8 +562,12 @@ class FeishuSender:
                     logger.info("飞书第 %d/%d 批发送成功", i + 1, total_chunks)
                 else:
                     logger.error("飞书第 %d/%d 批发送失败", i + 1, total_chunks)
+                    if daily_post_is_uncertain():
+                        return False
             except Exception as e:
                 logger.error("飞书第 %d/%d 批发送异常: %s", i + 1, total_chunks, e)
+                if daily_post_is_uncertain():
+                    return False
             if i < total_chunks - 1:
                 time.sleep(1)
         return success_count == total_chunks
@@ -522,18 +590,24 @@ class FeishuSender:
             except (requests.exceptions.ConnectionError,
                      requests.exceptions.Timeout,
                      requests.exceptions.RequestException) as e:
+                record_daily_post("unknown")
                 logger.error("飞书 Webhook 网络请求异常: %s", e)
                 return False
             if response.status_code == 200:
                 try:
                     result = response.json()
                 except (ValueError, AttributeError):
+                    record_daily_post("unknown")
                     logger.error("飞书 Webhook 返回非 JSON 响应: %s", response.text[:200])
                     return False
                 if not isinstance(result, dict):
+                    record_daily_post("unknown")
                     logger.error("飞书 Webhook 返回非预期格式: %s", type(result).__name__)
                     return False
                 code = result.get("code") if "code" in result else result.get("StatusCode")
+                self._record_post_response(response.status_code, code)
+                if daily_post_is_uncertain():
+                    return False
                 if code == 0:
                     logger.info("飞书 Webhook 消息发送成功")
                     return True
@@ -543,6 +617,7 @@ class FeishuSender:
                     result.get("msg") or result.get("StatusMessage", "未知错误"),
                 )
                 return False
+            self._record_post_response(response.status_code)
             logger.error("飞书 Webhook 请求失败: HTTP %d", response.status_code)
             return False
 
@@ -550,6 +625,8 @@ class FeishuSender:
 
         if _post_payload(card_payload):
             return True
+        if daily_post_is_uncertain():
+            return False
 
         text_payload = {
             "msg_type": "text",

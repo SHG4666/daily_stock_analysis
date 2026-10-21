@@ -36,6 +36,7 @@ from src.analyzer import (
     stabilize_decision_with_structure,
 )
 from src.notification import NotificationService, NotificationChannel
+from src.core.daily_delivery import daily_delivery_kwargs, record_daily_component_failure
 from src.report_language import (
     infer_decision_type_from_advice,
     localize_confidence_level,
@@ -2538,6 +2539,7 @@ class StockAnalysisPipeline:
                     severity="info",
                     dedup_key=f"report:single:{stock_code}:{report_type.value}",
                     cooldown_key=f"report:single:{stock_code}:{report_type.value}",
+                    **daily_delivery_kwargs(("stocks",)),
                 )
                 notification_run = self._build_notification_run_snapshot(
                     channel="report",
@@ -2559,6 +2561,7 @@ class StockAnalysisPipeline:
                 else:
                     logger.warning(f"[{stock_code}] 单股推送失败")
             except Exception as e:
+                record_daily_component_failure("stocks")
                 notification_run = self._build_notification_run_snapshot(
                     channel="report",
                     status="failed",
@@ -2817,7 +2820,9 @@ class StockAnalysisPipeline:
                     if channel == NotificationChannel.FEISHU:
                         channel_success, channel_error = _send_channel_safely(
                             channel.value,
-                            lambda: self.notifier.send_to_feishu(report),
+                            lambda: self.notifier.send_to_feishu(
+                                report, **daily_delivery_kwargs(("stocks",)),
+                            ),
                         )
                         non_wechat_success = channel_success or non_wechat_success
                         _record_channel_result(

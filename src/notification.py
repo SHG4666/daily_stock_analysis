@@ -24,6 +24,7 @@ from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 from enum import Enum
 
 from src.config import Config, get_config
+from src.core.daily_delivery import daily_delivery_kwargs
 from src.enums import ReportType
 from src.market_phase_summary import format_public_market_status_line, format_public_phase_pack_excerpt
 from src.notification_routing import (
@@ -2130,6 +2131,7 @@ class NotificationService(
         image_bytes: Optional[bytes],
         email_stock_codes: Optional[List[str]],
         email_send_to_all: bool,
+        daily_components: Optional[Tuple[str, ...]] = None,
     ) -> bool:
         use_image = self._should_use_image_for_channel(channel, image_bytes)
         if channel == NotificationChannel.WECHAT:
@@ -2137,7 +2139,8 @@ class NotificationService(
                 return self._send_wechat_image(image_bytes)
             return self.send_to_wechat(content)
         if channel == NotificationChannel.FEISHU:
-            return self.send_to_feishu(content)
+            delivery_kwargs = daily_delivery_kwargs(daily_components) if daily_components else {}
+            return self.send_to_feishu(content, **delivery_kwargs)
         if channel == NotificationChannel.TELEGRAM:
             if use_image:
                 return self._send_telegram_photo(image_bytes)
@@ -2185,6 +2188,7 @@ class NotificationService(
         severity: Optional[str] = None,
         dedup_key: Optional[str] = None,
         cooldown_key: Optional[str] = None,
+        daily_components: Optional[Tuple[str, ...]] = None,
     ) -> NotificationDispatchResult:
         """
         Send a notification and return per-channel diagnostics.
@@ -2205,6 +2209,7 @@ class NotificationService(
             severity: 通知严重级别；未设置时按路由类型推断
             dedup_key: 可选稳定去重 key；未设置时使用内容 hash
             cooldown_key: 可选冷却 key；未设置时使用路由/级别默认 key
+            daily_components: 每日工作流的飞书报告组件；其他渠道及普通调用不受影响
 
         Returns:
             Structured dispatch diagnostics.
@@ -2337,6 +2342,7 @@ class NotificationService(
                     image_bytes=image_bytes,
                     email_stock_codes=email_stock_codes,
                     email_send_to_all=email_send_to_all,
+                    **({"daily_components": daily_components} if daily_components else {}),
                 )
                 latency_ms = int((time.monotonic() - started_at) * 1000)
 
@@ -2398,6 +2404,7 @@ class NotificationService(
         severity: Optional[str] = None,
         dedup_key: Optional[str] = None,
         cooldown_key: Optional[str] = None,
+        daily_components: Optional[Tuple[str, ...]] = None,
     ) -> bool:
         """
         统一发送接口 - 向所有已配置的渠道发送。
@@ -2413,6 +2420,7 @@ class NotificationService(
             severity=severity,
             dedup_key=dedup_key,
             cooldown_key=cooldown_key,
+            **({"daily_components": daily_components} if daily_components else {}),
         )
         return bool(result.success)
    

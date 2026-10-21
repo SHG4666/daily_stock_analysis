@@ -22,6 +22,15 @@ on:
         required: false
         default: false
         type: boolean
+      resend_daily:
+        description: '确认重发当日飞书报告（可能重复已送达内容；仅新手动运行首次尝试生效）'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
 
 # 并发控制：同一时间只运行一个分析任务
 concurrency:
@@ -74,6 +83,35 @@ jobs:
           PATTERN_SCREEN_DEADLINE_SECONDS: ${{ vars.PATTERN_SCREEN_DEADLINE_SECONDS || '1200' }}
           PATTERN_SCREEN_MIN_COVERAGE: ${{ vars.PATTERN_SCREEN_MIN_COVERAGE || '0.9' }}
         run: python scripts/screen_eight_patterns.py
+
+      - name: 准备每日飞书发送记录
+        id: delivery
+        if: steps.patterns.outputs.status != 'market_closed'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DELIVERY_AS_OF: ${{ steps.patterns.outputs.as_of }}
+          DELIVERY_MODE: ${{ github.event.inputs.mode || 'full' }}
+          DELIVERY_RESEND: ${{ github.event.inputs.resend_daily || 'false' }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_CHAT_ID: ${{ vars.FEISHU_CHAT_ID || secrets.FEISHU_CHAT_ID }}
+          FEISHU_RECEIVE_ID_TYPE: ${{ vars.FEISHU_RECEIVE_ID_TYPE || secrets.FEISHU_RECEIVE_ID_TYPE }}
+          FEISHU_DOMAIN: ${{ vars.FEISHU_DOMAIN || secrets.FEISHU_DOMAIN }}
+        run: >-
+          python scripts/daily_delivery.py prepare
+          --as-of "$DELIVERY_AS_OF" --mode "$DELIVERY_MODE"
+          --allow-resend "$DELIVERY_RESEND"
+
+      # Sending is allowed only after this durable intent has been uploaded.
+      - name: 保存每日飞书发送意向
+        id: delivery_intent
+        if: steps.delivery.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.delivery.outputs.intent_name }}
+          path: reports/daily_delivery/intent.json
+          if-no-files-found: error
+          retention-days: 30
       
       - name: 执行股票分析
         env:
@@ -521,6 +559,19 @@ jobs:
             python main.py $FORCE_RUN_ARG "${COMPLETED_SESSION_ARGS[@]}"
           fi
       
+      - name: 核对每日飞书发送回执
+        if: always() && steps.delivery_intent.outcome == 'success'
+        run: python scripts/daily_delivery.py finish
+
+      - name: 保存每日飞书发送回执
+        if: always() && steps.delivery_intent.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.delivery.outputs.receipt_name }}
+          path: reports/daily_delivery/receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
       - name: 上传分析报告
         uses: actions/upload-artifact@v6
         if: always()

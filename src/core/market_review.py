@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional
 import uuid
 
 from src.config import get_config
+from src.core.daily_delivery import daily_delivery_kwargs, finish_daily_components
 from src.notification import NotificationService
 from src.market_analyzer import MarketAnalyzer
 from src.report_language import normalize_report_language
@@ -224,7 +225,13 @@ def run_market_review(
                     wrapper_title=review_text["push_title"],
                 )
 
-                success = notifier.send(report_content, email_send_to_all=True, route_type="report")
+                try:
+                    success = notifier.send(
+                        report_content, email_send_to_all=True, route_type="report",
+                        **daily_delivery_kwargs(("market",)),
+                    )
+                finally:
+                    finish_daily_components("market")
                 if success:
                     logger.info("大盘复盘推送成功")
                 else:
