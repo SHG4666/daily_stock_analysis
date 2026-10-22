@@ -54,6 +54,7 @@ from datetime import datetime, timezone, timedelta
 from data_provider.base import canonical_stock_code
 from src.webui_frontend import prepare_webui_frontend_assets
 from src.config import get_config, Config
+from src.core.daily_delivery import daily_delivery_kwargs, finish_daily_components
 from src.logging_config import setup_logging
 
 
@@ -574,6 +575,7 @@ def run_full_analysis(
             send_notification=not args.no_notify,
             merge_notification=merge_notification
         )
+        finish_daily_components("stocks")
         if completed_session and stock_codes and not args.dry_run and not results:
             raise RuntimeError("延迟运行的个股分析均失败，不能视为已完成")
 
@@ -626,7 +628,18 @@ def run_full_analysis(
                 if completed_session:
                     combined_content = pipeline._with_completed_session_notice(combined_content)
                 if pipeline.notifier.is_available():
-                    if pipeline.notifier.send(combined_content, email_send_to_all=True, route_type="report"):
+                    components = tuple(
+                        component for component, present in (("stocks", results), ("market", market_report))
+                        if present
+                    )
+                    try:
+                        sent = pipeline.notifier.send(
+                            combined_content, email_send_to_all=True, route_type="report",
+                            **daily_delivery_kwargs(components),
+                        )
+                    finally:
+                        finish_daily_components(*components)
+                    if sent:
                         logger.info("已合并推送（个股+大盘复盘）")
                     else:
                         logger.warning("合并推送失败")
@@ -683,7 +696,9 @@ def run_full_analysis(
                         pipeline.notifier.send(
                             f"[{now.strftime('%Y-%m-%d %H:%M')}] 复盘文档创建成功: {doc_url}",
                             route_type="report",
+                            **daily_delivery_kwargs(("document",)),
                         )
+                        finish_daily_components("document")
 
         except Exception as e:
             logger.error(f"飞书文档生成失败: {e}")
