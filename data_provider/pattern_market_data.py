@@ -1,14 +1,20 @@
 """全市场形态筛选的批量行情入口：有超时的列表与一致前复权日 K。"""
 import json
+import logging
 import math
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import requests
 
 from data_provider.akshare_fetcher import _to_sina_tx_symbol
+from src.core.trading_calendar import MarketPhase, get_market_now, infer_market_phase
+
+logger = logging.getLogger(__name__)
 
 
 class PatternMarketData:
@@ -23,21 +29,29 @@ class PatternMarketData:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
-    def _get(url, **kwargs):
-        response = requests.get(url, timeout=(3, 8), **kwargs)
-        response.raise_for_status()
-        return response
+    def _get(url, *, stage="tencent_history", attempts=1, **kwargs):
+        for attempt in range(1, attempts + 1):
+            try:
+                response = requests.get(url, timeout=(3, 8), **kwargs)
+                response.raise_for_status()
+                return response
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                logger.warning("行情GET失败 stage=%s attempt=%s/%s error=%s", stage, attempt, attempts,
+                               type(exc).__name__)
+                if attempt == attempts:
+                    raise
+                time.sleep(1)
 
     def get_universe(self) -> list[dict]:
         from akshare.utils import demjson
         base = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center."
-        response = self._get(base + "getHQNodeStockCount", params={"node": "hs_a"})
+        response = self._get(base + "getHQNodeStockCount", stage="sina_count", attempts=2, params={"node": "hs_a"})
         count = int(str(demjson.decode(response.text)))
         if not 1000 <= count <= 15000:
             raise ValueError("A股列表数量异常，停止筛选")
 
         def page(number):
-            response = self._get(base + "getHQNodeData", params={
+            response = self._get(base + "getHQNodeData", stage=f"sina_page_{number}", attempts=2, params={
                 "page": number, "num": 100, "sort": "symbol", "asc": 1,
                 "node": "hs_a", "symbol": "",
             })
@@ -65,6 +79,26 @@ class PatternMarketData:
             })
         return result
 
+    @staticmethod
+    def _bounded_rows(rows, as_of):
+        if not isinstance(rows, list) or not rows:
+            raise ValueError("缺少一致前复权日K")
+        bounded = []
+        for row in rows:
+            if not isinstance(row, list) or not row or not isinstance(row[0], str):
+                raise ValueError("腾讯日K字段不完整")
+            session = date.fromisoformat(row[0])
+            if session.isoformat() != row[0]:
+                raise ValueError("腾讯日K日期无效")
+            # Clip before checking OHLCV so a future candle cannot affect the
+            # frozen target date, even if that future row is incomplete.
+            if session > as_of:
+                continue
+            if len(row) < 6:
+                raise ValueError("腾讯日K字段不完整")
+            bounded.append(row)
+        return bounded
+
     def get_daily_data(self, code, as_of):
         cache_path = self.cache_dir / f"{code}.json"
         payload = None
@@ -73,27 +107,41 @@ class PatternMarketData:
                 cached = json.loads(cache_path.read_text(encoding="utf-8"))
                 if (isinstance(cached, dict) and cached.get("as_of") == as_of.isoformat()
                         and cached.get("source") == "tencent_qfq_v1" and cached.get("code") == code):
-                    payload = cached
-            except (OSError, ValueError):
+                    rows = self._bounded_rows(cached.get("rows"), as_of)
+                    if rows and max(row[0] for row in rows) == as_of.isoformat():
+                        payload = {**cached, "rows": rows}
+            except (OSError, ValueError, TypeError):
                 pass
+            if payload is None:
+                # A matching as_of label does not prove the bars are fresh.
+                # In particular, old explicit-end responses can stop at D-1.
+                cache_path.unlink(missing_ok=True)
         if payload is None:
             symbol = _to_sina_tx_symbol(code)
+            now = get_market_now("cn")
+            same_day_postmarket = as_of == now.date() and infer_market_phase(
+                "cn", current_time=now) == MarketPhase.POSTMARKET
+            # Tencent's explicit-end endpoint can exclude the current daily
+            # bar even when end is in the future. Only the normal same-day
+            # post-close path uses its latest endpoint; frozen days stay dated.
+            end = "" if same_day_postmarket else as_of.isoformat()
             response = self._get(self.history_url, params={
-                "param": f"{symbol},day,,{as_of.isoformat()},240,qfq",
+                "param": f"{symbol},day,,{end},240,qfq",
             })
             result = response.json()
             if result.get("code") != 0:
                 raise ValueError("腾讯日K业务返回失败")
             stock = result.get("data", {}).get(symbol, {})
             # 不混入未复权 day 数组；缺前复权数组时明确判为数据缺失。
-            rows = stock.get("qfqday")
-            if not isinstance(rows, list) or not rows:
-                raise ValueError("缺少一致前复权日K")
+            rows = self._bounded_rows(stock.get("qfqday"), as_of)
             payload = {"as_of": as_of.isoformat(), "code": code,
                        "source": "tencent_qfq_v1", "rows": rows}
-            temporary = cache_path.with_suffix(".tmp")
-            temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-            temporary.replace(cache_path)
+            # Leave stale data visible to the existing freshness/coverage
+            # checks, but never persist it as a fresh same-day cache hit.
+            if rows and max(row[0] for row in rows) == as_of.isoformat():
+                temporary = cache_path.with_suffix(".tmp")
+                temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+                temporary.replace(cache_path)
         rows = payload.get("rows", [])
         if any(not isinstance(row, list) or len(row) < 6 for row in rows):
             raise ValueError("腾讯日K字段不完整")
