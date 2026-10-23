@@ -72,13 +72,19 @@ class PatternMarketData:
             code = str(item.get("code", ""))
             if not re.fullmatch(r"(?:00|30|60|68|43|83|87|88|92)\d{4}", code):
                 continue
+            try:
+                change_percent = float(item["changepercent"])
+            except (KeyError, TypeError, ValueError):
+                # Optional shortcut only: absent/placeholder quotes still need
+                # the full candle check, and must not break the legacy profile.
+                change_percent = None
             result.append({
                 "code": code, "name": str(item.get("name", "")).strip(),
                 "open": float(item.get("open") or 0),
                 "price": float(item.get("trade") or 0),
                 "amount": float(item.get("amount") or 0),
                 "volume": float(item.get("volume") or 0),
-                "change_percent": float(item["changepercent"]) if item.get("changepercent") is not None else None,
+                "change_percent": change_percent,
             })
         return result
 

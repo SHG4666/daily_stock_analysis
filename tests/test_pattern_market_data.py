@@ -81,7 +81,9 @@ def test_universe_pages_must_be_complete_and_unique(tmp_path, incomplete):
             return response("1000")
         page = kwargs["params"]["page"]
         rows = [{"code": f"{index:06d}", "name": "样本", "open": 1, "trade": 2,
-                 "volume": 100, "amount": 1000} for index in range((page-1)*100, page*100)]
+                 "volume": 100, "amount": 1000,
+                 "changepercent": [None, "", "--", "2.5"][index % 4]}
+                for index in range((page-1)*100, page*100)]
         return response(rows[:-1] if incomplete and page == 10 else rows)
     provider = PatternMarketData(tmp_path)
     with patch("requests.get", side_effect=get):
@@ -89,7 +91,9 @@ def test_universe_pages_must_be_complete_and_unique(tmp_path, incomplete):
             with pytest.raises(ValueError, match="不完整"):
                 provider.get_universe()
         else:
-            assert len(provider.get_universe()) == 1000
+            universe = provider.get_universe()
+            assert len(universe) == 1000
+            assert [item["change_percent"] for item in universe[:4]] == [None, None, None, 2.5]
 
 
 def fixed_clock(monkeypatch, now, phase):
