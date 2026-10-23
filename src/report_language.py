@@ -640,6 +640,14 @@ def localize_trend_prediction(value: Any, language: Optional[str]) -> str:
     )
 
 
+def is_bearish_trend(value: Any) -> bool:
+    """Recognize negative trend labels, including qualified text and negation."""
+    text = _normalize_lookup_key(value)
+    return any(canonical in {"bearish", "strong_bearish"}
+               and _first_non_negated_position(text, _normalize_lookup_key(label)) is not None
+               for label, canonical in _TREND_PREDICTION_CANONICAL_MAP.items())
+
+
 def localize_confidence_level(value: Any, language: Optional[str]) -> str:
     """Translate confidence level between Chinese and English when recognized."""
     return _translate_from_map(

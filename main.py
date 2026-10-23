@@ -576,7 +576,8 @@ def run_full_analysis(
             merge_notification=merge_notification
         )
         finish_daily_components("stocks")
-        if completed_session and stock_codes and not args.dry_run and not results:
+        if (completed_session and stock_codes and not args.dry_run and not results
+                and not getattr(pipeline, "analysis_success_count", 0)):
             raise RuntimeError("延迟运行的个股分析均失败，不能视为已完成")
 
         # Issue #128: 分析间隔 - 在个股分析和大盘分析之间添加延迟

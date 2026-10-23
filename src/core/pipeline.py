@@ -37,6 +37,7 @@ from src.analyzer import (
 )
 from src.notification import NotificationService, NotificationChannel
 from src.core.daily_delivery import daily_delivery_kwargs, record_daily_component_failure
+from src.core.recommendation_filter import rejection_reason
 from src.report_language import (
     infer_decision_type_from_advice,
     localize_confidence_level,
@@ -2291,7 +2292,7 @@ class StockAnalysisPipeline:
                 )
                 
                 # 单股推送模式（#55）：每分析完一只股票立即推送
-                if single_stock_notify:
+                if single_stock_notify and not rejection_reason(result):
                     self._send_single_stock_notification(
                         result,
                         report_type=report_type,
@@ -2388,6 +2389,8 @@ class StockAnalysisPipeline:
             )
         
         results: List[AnalysisResult] = []
+        self.analysis_success_count = 0
+        self.recommendation_exclusions = []
         
         # 使用线程池并发处理
         # 注意：max_workers 设置较低（默认3）以避免触发反爬
@@ -2412,6 +2415,12 @@ class StockAnalysisPipeline:
                 try:
                     result = future.result()
                     if result and result.success:
+                        self.analysis_success_count += 1
+                        rejection = rejection_reason(result)
+                        if rejection:
+                            self.recommendation_exclusions.append({"code": code, "reason": rejection})
+                            logger.info("[%s] 不进入每日推荐：%s", code, rejection)
+                            continue
                         results.append(result)
                         if single_stock_notify and send_notification and not dry_run:
                             self._send_single_stock_notification(
@@ -2455,11 +2464,14 @@ class StockAnalysisPipeline:
             )
             fail_count = len(stock_codes) - success_count
         else:
-            success_count = len(results)
+            success_count = self.analysis_success_count
             fail_count = len(stock_codes) - success_count
         
         logger.info("===== 分析完成 =====")
         logger.info(f"成功: {success_count}, 失败: {fail_count}, 耗时: {elapsed_time:.2f} 秒")
+        if self.recommendation_exclusions:
+            logger.info("每日推荐保留 %s 只，模型否决 %s 只；不会补入其他股票凑数",
+                        len(results), len(self.recommendation_exclusions))
         
         # 保存报告到本地文件（无论是否推送通知都保存）
         if results and not dry_run:
@@ -2487,6 +2499,8 @@ class StockAnalysisPipeline:
         fallback_code: Optional[str] = None,
     ) -> None:
         """发送单股通知，供直接单股入口和批量串行推送共用。"""
+        if rejection_reason(result):
+            return
         if not self.notifier.is_available():
             notification_run = self._build_notification_run_snapshot(
                 channel="report",

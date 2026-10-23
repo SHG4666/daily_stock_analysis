@@ -83,6 +83,7 @@ WEB_SETTINGS_HIDDEN_FROM_UI = {
     # Standalone screening CLI / GitHub Repository Variables; Web settings
     # cannot configure the scheduled workflow that consumes these fields.
     "PATTERN_SCREEN_ENABLED",
+    "PATTERN_SCREEN_PROFILE",
     "PATTERN_SCREEN_TOP_N",
     "PATTERN_SCREEN_WORKERS",
     "PATTERN_SCREEN_MIN_AMOUNT",

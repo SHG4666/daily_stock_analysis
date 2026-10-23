@@ -52,3 +52,26 @@ def test_universe_error_writes_failure_report_and_no_stock_pool(tmp_path, monkey
 def test_nonfinite_liquidity_configuration_is_rejected():
     with pytest.raises(SystemExit):
         entry.parse_args(["--min-amount", "nan"])
+
+
+def test_bottom_profile_reaches_daily_entrypoint_and_github_stock_handoff(tmp_path, monkeypatch):
+    from tests.test_bottom_reversal import Provider, AS_OF
+
+    set_clock(monkeypatch, datetime(2026, 10, 23, 18, tzinfo=ZoneInfo("Asia/Shanghai")), AS_OF, True)
+    monkeypatch.setenv("PATTERN_SCREEN_PROFILE", "all_patterns")
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "handoff"))
+    monkeypatch.setattr(entry, "PatternMarketData", lambda *args: Provider())
+    monkeypatch.setattr(entry, "enrich_shareholder_counts", lambda *args, **kwargs: None)
+    assert entry.main(["--profile", "bottom_reversal", "--output-dir", str(tmp_path)]) == 0
+    result = json.loads((tmp_path / "screen.json").read_text())
+    assert result["profile"] == "bottom_reversal"
+    assert result["ruleset_version"] == "3.0-bottom-reversal"
+    assert result["selected"][0]["bottom_reversal"]["turnover"] == 2.2
+    assert "stock_codes=002727\n" in (tmp_path / "handoff").read_text()
+    assert "status=complete\n" in (tmp_path / "handoff").read_text()
+
+
+def test_invalid_environment_profile_is_rejected_before_fetching(monkeypatch):
+    monkeypatch.setenv("PATTERN_SCREEN_PROFILE", "unknown")
+    with pytest.raises(SystemExit):
+        entry.parse_args([])

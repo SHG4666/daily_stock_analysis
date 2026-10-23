@@ -16,6 +16,7 @@ from src.pattern_screener import (
 )
 from src.stock_links import get_a_share_quote_url
 from src.shareholder_count import format_shareholder_count
+from src import bottom_reversal
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,10 @@ def build_chart_bars(frame):
 
 
 def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
-                  deadline_seconds=1200, min_coverage=.9):
+                  deadline_seconds=1200, min_coverage=.9, profile="all_patterns"):
+    if profile not in ("all_patterns", bottom_reversal.PROFILE):
+        raise ValueError("unknown screening profile")
+    bottom_focus = profile == bottom_reversal.PROFILE
     universe = provider.get_universe()
     excluded = Counter()
     eligible = []
@@ -61,6 +65,11 @@ def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
             excluded["成交额不足"] += 1
         elif stock["price"] <= stock["open"]:
             excluded["当天不是阳线"] += 1
+        elif (bottom_focus and stock.get("change_percent") is not None
+              and math.isfinite(stock["change_percent"])
+              and stock["change_percent"] < bottom_reversal.LIMITS["daily_return_min"] * 100):
+            # 仅提前执行同一涨幅门槛；通过后仍以完整日K再次核实，减少无效下载。
+            excluded["报价涨幅不足2%"] += 1
         else:
             eligible.append(stock)
 
@@ -76,7 +85,22 @@ def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
         # 最新前复权价格应与当天未复权收盘一致，防止响应错码或复权基准异常。
         if abs(float(frame.close.iloc[-1]) / stock["price"] - 1) > .01:
             raise ScreeningDataError("quote_mismatch")
-        signals = detect_patterns(frame, as_of)
+        metrics = {}
+        if bottom_focus:
+            metrics, rejection = bottom_reversal.inspect_bottom_reversal(frame)
+            if rejection:
+                return {"rejection": rejection}
+            try:
+                turnover, passed = bottom_reversal.confirm_turnover(
+                    frame, provider.get_turnover_data(stock["code"], as_of))
+            except Exception as exc:
+                raise ScreeningDataError("turnover_data") from exc
+            if not passed:
+                return {"rejection": "换手率未明显提高"}
+            metrics.update(turnover)
+            signals = [bottom_reversal.reversal_signal(metrics)]
+        else:
+            signals = detect_patterns(frame, as_of)
         if not signals:
             return None
         return {
@@ -88,6 +112,8 @@ def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
             "source_url": get_a_share_quote_url(stock["code"]),
             "closes": [round(float(value), 3) for value in frame.close.tail(60)],
             "chart_bars": build_chart_bars(frame),
+            **({"bottom_reversal": metrics, "turnover_source": provider.turnover_source,
+                "turnover_url": provider.turnover_url} if bottom_focus else {}),
         }
 
     pool = ThreadPoolExecutor(max_workers=workers)
@@ -99,7 +125,9 @@ def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
             try:
                 candidate = future.result()
                 verified += 1
-                if candidate:
+                if candidate and "rejection" in candidate:
+                    excluded[candidate["rejection"]] += 1
+                elif candidate:
                     candidates.append(candidate)
             except ScreeningDataError as exc:
                 failures[exc.reason] += 1
@@ -118,13 +146,23 @@ def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
     finally:
         pool.shutdown(wait=True, cancel_futures=True)
 
-    # 仅是研究优先顺序，不是上涨概率；扩展形态不与原图形态重复加分。
-    rank_candidates(candidates)
+    if bottom_focus:
+        # 当前规则要求当日触发；先比较真实换手率提升，再比较放量。
+        candidates.sort(key=lambda item: (-item["bottom_reversal"]["turnover_five_mean_ratio"],
+                                          -item["volume_ratio"], item["code"]))
+    else:
+        rank_candidates(candidates)
+    turnover_required = len(candidates) + excluded["换手率未明显提高"] + failures["turnover_data"]
+    turnover_coverage = (1 - failures["turnover_data"] / turnover_required) if turnover_required else 1.0
     coverage = verified / len(eligible) if eligible else 1.0
-    complete = completed == len(eligible) and coverage >= min_coverage
+    complete = (completed == len(eligible) and coverage >= min_coverage
+                and (not bottom_focus or turnover_coverage >= min_coverage))
     return {
         "status": "complete" if complete else "incomplete", "as_of": as_of.isoformat(),
-        "ruleset_version": RULESET_VERSION,
+        "ruleset_version": bottom_reversal.RULESET_VERSION if bottom_focus else RULESET_VERSION,
+        "profile": profile,
+        "turnover_required": turnover_required if bottom_focus else 0,
+        "turnover_coverage": round(turnover_coverage, 4) if bottom_focus else None,
         "universe_count": len(universe), "eligible_count": len(eligible),
         "completed_count": completed, "verified_count": verified, "coverage": round(coverage, 4),
         "excluded": dict(excluded), "data_issues": dict(failures), "failure_examples": failure_examples,
@@ -135,7 +173,9 @@ def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
         "parameters": {"top_n": top_n, "workers": workers, "min_amount": min_amount,
                        "deadline_seconds": deadline_seconds, "min_coverage": min_coverage,
                        "volume_breakout": dict(VOLUME_BREAKOUT_LIMITS),
-                       "ranking": "max(1, base_pattern_count), volume_ratio desc, code asc"},
+                       "bottom_reversal": dict(bottom_reversal.LIMITS) if bottom_focus else None,
+                       "ranking": ("turnover_five_mean_ratio desc, volume_ratio desc, code asc" if bottom_focus
+                                   else "max(1, base_pattern_count), volume_ratio desc, code asc")},
     }
 
 
@@ -192,8 +232,10 @@ def render_html(result):
 {holder_line}
 <ul>{evidence}</ul><p class="muted">待人工查看K线确认；随后核查公告、估值与交易可行性。</p></article>''')
     counts = Counter(signal["name"] for candidate in result.get("candidates", []) for signal in candidate["signals"])
+    bottom_focus = result.get("profile") == bottom_reversal.PROFILE
+    pattern_names = (bottom_reversal.SIGNAL_NAME,) if bottom_focus else PATTERN_NAMES
     buttons = '<button class="active" data-filter="">全部</button>' + "".join(
-        f'<button data-filter="{name}">{name} <b>{counts[name]}</b></button>' for name in PATTERN_NAMES
+        f'<button data-filter="{name}">{name} <b>{counts[name]}</b></button>' for name in pattern_names
     )
     issue_labels = {
         "short_history": "历史不足120日", "fetch_error": "抓取失败或缺少前复权数据",
@@ -201,6 +243,7 @@ def render_html(result):
         "invalid_ohlcv": "量价数据无效", "missing_columns": "行情字段缺失",
         "duplicate_dates": "同日数据重复", "invalid_dates": "行情日期无效",
         "budget_unprocessed": "筛选预算内未完成", "ConnectionError": "市场列表连接失败",
+        "turnover_data": "实际换手率缺失或日期不完整",
     }
     issues = escape(" · ".join(
         f"{issue_labels.get(key, '其他数据异常')} {count}只"
@@ -223,18 +266,28 @@ def render_html(result):
     no_candidates = '<p class="empty">本次没有符合条件的形态候选。</p>' if complete else '<p class="empty">本次数据尚不足以完成筛选，请查看数据异常统计。</p>'
     if result.get("status") == "market_closed":
         no_candidates = '<p class="empty">当前A股休市，未执行市场筛选，不生成今天的新候选。</p>'
+    focus_note = ''
+    if bottom_focus:
+        focus_note = ('<p><strong>当前每日策略：长期下跌后底部放量上涨。</strong>'
+                      '此前60日跌幅至少15%，20日均线较40个交易日前至少下降8%；'
+                      '当日收盘距此前60日低点不超过20%，涨幅至少2%且收阳线，'
+                      '成交量至少为此前20日均量的1.8倍，收盘处于日内振幅上方35%，此前5日涨幅不超过10%。'
+                      '实际换手率至少为上一日的1.2倍、此前5日均值的1.5倍。'
+                      '按换手率提升倍数、量比排序；原图形态不再作为每日入选的替代条件。'
+                      f'换手率核验覆盖 {result.get("turnover_coverage", 0) or 0:.1%}。'
+                      '换手率源：腾讯日K；缺失不以量比替代。后续分析看空或建议减仓/卖出者不进入推荐推送。</p>')
     return f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>技术形态候选 · {escape(result['as_of'])}</title>
 <style>*{{box-sizing:border-box}}body{{margin:0;background:#f4f5f3;color:#20322f;font:15px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}}main{{max-width:1200px;margin:auto;padding:44px 28px}}h1{{font-size:34px;line-height:1.3;margin:10px 0}}h2{{font-size:22px}}.eyebrow{{color:#56746c;font-size:13px;letter-spacing:2px}}.muted,small{{color:#63756e}}.status{{background:{'#deeee8' if complete else '#f4e6cc'};padding:14px 18px;border-radius:12px}}.stats{{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:24px 0}}.stat{{background:#fff;padding:18px;border-radius:12px}}.stat b{{display:block;font-size:30px}}nav{{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0}}button{{border:1px solid #ccd8d1;background:#fff;padding:9px 14px;border-radius:20px;color:#24483e;cursor:pointer}}button.active{{background:#244f43;color:#fff}}.grid{{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}}article{{background:#fff;border:1px solid #dde4df;border-radius:14px;padding:22px}}h3{{margin:0;font-size:21px}}.card-top{{display:flex;justify-content:space-between;gap:12px}}a{{color:#217261}}.tags{{color:#277d68;font-weight:600}}.selected{{display:inline-block;background:#dceee7;font-size:12px;padding:2px 8px;border-radius:8px;margin-left:8px}}article p,li{{font-size:14px}}ul{{padding-left:20px}}.note{{background:#e8ece8;padding:22px;border-radius:12px;margin-top:28px}}.empty{{padding:30px;background:white;border-radius:12px}}[hidden]{{display:none}}@media(max-width:700px){{main{{padding:24px 16px}}h1{{font-size:27px}}.grid{{grid-template-columns:1fr}}.stats{{grid-template-columns:repeat(2,1fr)}}.card-top{{display:block}}}}</style>
 <main><div class="eyebrow">DAILY STOCK ANALYSIS / 技术形态筛选</div><h1>技术形态候选</h1>
-<p class="muted">行情截止 {escape(result['as_of'])} · 沪深京 A 股 · 规则版本 {ruleset_version} · 原图八形态及扩展突破规则。</p>
+<p class="muted">行情截止 {escape(result['as_of'])} · 沪深京 A 股 · 规则版本 {ruleset_version} · {'底部放量反弹筛选' if bottom_focus else '原图八形态及扩展突破规则'}。</p>
 {scope_line}
 {delay_line}
 <div class="status">{status} · 当日行情日期核验覆盖 {result.get('coverage',0):.1%}</div>
 <div class="stats"><div class="stat">市场股票<b>{result.get('universe_count',0):,}</b></div><div class="stat">基础条件通过<b>{result.get('eligible_count',0):,}</b></div><div class="stat">形态候选<b>{len(result.get('candidates',[]))}</b></div><div class="stat">交给现有分析<b>{len(result.get('selected',[]))}</b></div></div>
 <p class="muted">{exclusions}</p><h2>按形态查看</h2><nav>{buttons}</nav>
 <div class="grid">{''.join(cards) or no_candidates}</div>
-<section class="note"><h2>筛选依据与数据限制</h2><p>同一股票命中多形态时合并。研究计数取原图八形态命中数，最低为1；扩展突破提供候选资格，与原图形态重叠不重复加分。再按量比、代码排序；计数不是上涨概率，命中不代表后续必然上涨。均量、阻力与形态拟合均不包含当日突破；只接受最新完整交易日的日K。前复权窗口每天重新获取，同日缓存仅供重跑；不混入未复权实时价格。</p>
+<section class="note"><h2>筛选依据与数据限制</h2>{focus_note}<p>{'传统形态模式：' if bottom_focus else ''}同一股票命中多形态时合并。研究计数取原图八形态命中数，最低为1；扩展突破提供候选资格，与原图形态重叠不重复加分。再按量比、代码排序；计数不是上涨概率，命中不代表后续必然上涨。均量、阻力与形态拟合均不包含当日突破；只接受最新完整交易日的日K。前复权窗口每天重新获取，同日缓存仅供重跑；不混入未复权实时价格。</p>
 <p>本次排除ST、停牌、非阳线、当日成交额不足{minimum_amount:g}万元及120根历史不足的股票。杯柄和圆弧底尤其需要人工看图复核。覆盖不足或查询未完成时不会自动回退到原来的自选股。</p>
 <p>数据异常或排除：{issues}。本次日K核验耗时：{result.get('elapsed_seconds',0)}秒。</p>
 <p>股票范围与成交额：<a href="{escape(result.get('universe_url',''),quote=True)}">{escape(result.get('universe_source',''))}</a>；日K：<a href="{escape(result.get('history_url',''),quote=True)}">{escape(result.get('history_source',''))}</a>。每个候选均附独立行情链接。</p></section></main>
