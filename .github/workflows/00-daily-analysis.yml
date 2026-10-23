@@ -73,10 +73,11 @@ jobs:
           key: pattern-qfq-v1-${{ runner.os }}-${{ github.run_id }}
           restore-keys: pattern-qfq-v1-${{ runner.os }}-
 
-      - name: 按图片形态与扩展突破规则筛选A股
+      - name: 按长期下跌底部放量与换手率筛选A股
         id: patterns
         if: vars.PATTERN_SCREEN_ENABLED != 'false' && github.event.inputs.mode != 'market-only'
         env:
+          PATTERN_SCREEN_PROFILE: ${{ vars.PATTERN_SCREEN_PROFILE || 'bottom_reversal' }}
           PATTERN_SCREEN_TOP_N: ${{ vars.PATTERN_SCREEN_TOP_N || '10' }}
           PATTERN_SCREEN_WORKERS: ${{ vars.PATTERN_SCREEN_WORKERS || '4' }}
           PATTERN_SCREEN_MIN_AMOUNT: ${{ vars.PATTERN_SCREEN_MIN_AMOUNT || '20000000' }}

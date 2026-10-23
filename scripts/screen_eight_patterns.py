@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""收盘后按原图八形态和扩展突破规则筛选；独立运行不调用AI或发送通知。"""
+"""收盘后按底部反弹或原图形态模式筛选；独立运行不调用AI或发送通知。"""
 import argparse
 import logging
 import math
@@ -26,7 +26,11 @@ def parse_args(argv=None):
     parser.add_argument("--min-amount", type=float, default=float(os.getenv("PATTERN_SCREEN_MIN_AMOUNT", "20000000")))
     parser.add_argument("--deadline", type=int, default=int(os.getenv("PATTERN_SCREEN_DEADLINE_SECONDS", "1200")))
     parser.add_argument("--min-coverage", type=float, default=float(os.getenv("PATTERN_SCREEN_MIN_COVERAGE", "0.9")))
+    parser.add_argument("--profile", choices=("all_patterns", "bottom_reversal"),
+                        default=os.getenv("PATTERN_SCREEN_PROFILE", "all_patterns"))
     args = parser.parse_args(argv)
+    if args.profile not in ("all_patterns", "bottom_reversal"):
+        parser.error("未知筛选模式")
     if (not 1 <= args.top <= 50 or not 1 <= args.workers <= 8
             or not math.isfinite(args.min_amount) or args.min_amount < 0
             or args.deadline < 1 or not 0 < args.min_coverage <= 1):
@@ -44,10 +48,12 @@ def write_github_outputs(result):
             stream.write("delayed_schedule=" + str(bool(result.get("delayed_schedule"))).lower() + "\n")
 
 
-def empty_result(status, as_of, issue=None):
+def empty_result(status, as_of, issue=None, profile="all_patterns"):
+    from src import bottom_reversal
     return {
         "status": status, "as_of": as_of.isoformat(), "selected": [], "candidates": [],
-        "ruleset_version": RULESET_VERSION,
+        "profile": profile,
+        "ruleset_version": bottom_reversal.RULESET_VERSION if profile == bottom_reversal.PROFILE else RULESET_VERSION,
         "data_issues": {issue: 1} if issue else {}, "coverage": 0,
         "universe_source": PatternMarketData.universe_source,
         "universe_url": PatternMarketData.universe_url,
@@ -65,7 +71,7 @@ def main(argv=None):
     event_name = os.getenv("GITHUB_EVENT_NAME", "")
     delayed = is_delayed_schedule(now, as_of, event_name)
     if not delayed and not is_market_open("cn", now.date()):
-        result = empty_result("market_closed", as_of)
+        result = empty_result("market_closed", as_of, profile=args.profile)
         write_result(result, args.output_dir)
         write_github_outputs(result)
         logging.info("A股休市，正常跳过，不生成今天的新候选")
@@ -77,7 +83,7 @@ def main(argv=None):
         provider = PatternMarketData(Path(args.cache_dir))
         result = screen_market(provider, as_of, top_n=args.top, workers=args.workers,
                                min_amount=args.min_amount, deadline_seconds=args.deadline,
-                               min_coverage=args.min_coverage)
+                               min_coverage=args.min_coverage, profile=args.profile)
         result["delayed_schedule"] = delayed
         result["generated_at"] = now.isoformat()
         enrich_shareholder_counts(result, ShareholderCountProvider(), workers=args.workers)
@@ -88,7 +94,7 @@ def main(argv=None):
                      len(result["candidates"]), len(result["selected"]))
         return 0 if result["status"] == "complete" else 2
     except Exception as exc:
-        result = empty_result("incomplete", as_of, type(exc).__name__)
+        result = empty_result("incomplete", as_of, type(exc).__name__, profile=args.profile)
         write_result(result, args.output_dir)
         write_github_outputs(result)
         logging.error("筛选无法完成：%s", type(exc).__name__)

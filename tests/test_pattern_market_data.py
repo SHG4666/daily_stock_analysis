@@ -19,6 +19,27 @@ def response(data):
     return result
 
 
+def test_actual_turnover_is_eighth_field_and_reuses_same_day_cache(tmp_path):
+    provider = PatternMarketData(tmp_path)
+    rows = [["2026-10-22", "13.25", "12.97", "13.26", "12.77", "155431", {}, "3.91", "20150.41", ""]]
+    with patch("requests.get", return_value=history(rows)) as get:
+        frame = provider.get_daily_data("600519", date(2026, 10, 22))
+        rates = provider.get_turnover_data("600519", date(2026, 10, 22))
+    assert get.call_count == 1
+    assert frame.volume.iloc[0] == 15543100
+    assert rates.to_dict("records") == [{"date": "2026-10-22", "turnover": 3.91}]
+    assert "amount" not in frame
+
+
+@pytest.mark.parametrize("extra", [[], [{}, "--"], [{}, ""], [{}, None]])
+def test_legacy_or_missing_turnover_never_uses_volume_or_amount(tmp_path, extra):
+    import math
+    row = ["2026-10-22", "10", "11", "11", "10", "123"] + extra
+    with patch("requests.get", return_value=history([row])):
+        rates = PatternMarketData(tmp_path).get_turnover_data("600519", date(2026, 10, 22))
+    assert math.isnan(rates.turnover.iloc[0])
+
+
 def history(rows, key="qfqday"):
     return response({"code": 0, "data": {"sh600519": {key: rows}}})
 

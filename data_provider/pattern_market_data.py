@@ -23,6 +23,8 @@ class PatternMarketData:
     universe_source = "新浪沪深京A股实时列表"
     universe_url = "https://vip.stock.finance.sina.com.cn/mkt/#hs_a"
     history_url = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get"
+    turnover_source = "腾讯日K实际换手率"
+    turnover_url = history_url
 
     def __init__(self, cache_dir: Path):
         self.cache_dir = Path(cache_dir)
@@ -76,8 +78,13 @@ class PatternMarketData:
                 "price": float(item.get("trade") or 0),
                 "amount": float(item.get("amount") or 0),
                 "volume": float(item.get("volume") or 0),
+                "change_percent": float(item["changepercent"]) if item.get("changepercent") is not None else None,
             })
         return result
+
+    def get_turnover_data(self, code, as_of):
+        """复用已核验的同日缓存，第8项为百分数换手率，不从成交量估算。"""
+        return self.get_daily_data(code, as_of)[["date", "turnover"]]
 
     @staticmethod
     def _bounded_rows(rows, as_of):
@@ -150,4 +157,8 @@ class PatternMarketData:
             "date", "open", "close", "high", "low", "volume",
         ])
         frame["volume"] = pd.to_numeric(frame["volume"], errors="coerce") * 100
+        # 第8项是百分数换手率（如3.74表示3.74%），不是成交额。
+        # 老响应/缓存可以只有6列，仍供传统形态使用，但不能通过换手率核验。
+        frame["turnover"] = pd.to_numeric(pd.Series(
+            [row[7] if len(row) > 7 else None for row in rows]), errors="coerce")
         return frame
