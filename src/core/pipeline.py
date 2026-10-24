@@ -2474,6 +2474,12 @@ class StockAnalysisPipeline:
                         len(results), len(self.recommendation_exclusions))
         
         # 保存报告到本地文件（无论是否推送通知都保存）
+        if not dry_run:
+            try:
+                from src.services.screen_learning_service import write_model_audit
+                write_model_audit(results, self.recommendation_exclusions, stock_codes)
+            except (OSError, ValueError, TypeError):
+                logger.warning("选股学习模型审计未保存，后续复盘不会推定已发送")
         if results and not dry_run:
             self._save_local_report(results, report_type)
 

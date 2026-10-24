@@ -84,6 +84,7 @@ WEB_SETTINGS_HIDDEN_FROM_UI = {
     # cannot configure the scheduled workflow that consumes these fields.
     "PATTERN_SCREEN_ENABLED",
     "PATTERN_SCREEN_PROFILE",
+    "SCREEN_LEARNING_ENABLED",
     "PATTERN_SCREEN_TOP_N",
     "PATTERN_SCREEN_WORKERS",
     "PATTERN_SCREEN_MIN_AMOUNT",

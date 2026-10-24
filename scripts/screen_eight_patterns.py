@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """收盘后按底部反弹或原图形态模式筛选；独立运行不调用AI或发送通知。"""
 import argparse
+import json
 import logging
 import math
 import os
@@ -28,6 +29,7 @@ def parse_args(argv=None):
     parser.add_argument("--min-coverage", type=float, default=float(os.getenv("PATTERN_SCREEN_MIN_COVERAGE", "0.9")))
     parser.add_argument("--profile", choices=("all_patterns", "bottom_reversal"),
                         default=os.getenv("PATTERN_SCREEN_PROFILE", "all_patterns"))
+    parser.add_argument("--learning-context", default=os.getenv("SCREEN_LEARNING_CONTEXT"))
     args = parser.parse_args(argv)
     if args.profile not in ("all_patterns", "bottom_reversal"):
         parser.error("未知筛选模式")
@@ -81,9 +83,15 @@ def main(argv=None):
         return 2
     try:
         provider = PatternMarketData(Path(args.cache_dir))
+        learning_context = None
+        if args.learning_context:
+            try:
+                learning_context = json.loads(Path(args.learning_context).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                logging.warning("学习排序上下文不可用，沿用原排序")
         result = screen_market(provider, as_of, top_n=args.top, workers=args.workers,
                                min_amount=args.min_amount, deadline_seconds=args.deadline,
-                               min_coverage=args.min_coverage, profile=args.profile)
+                               min_coverage=args.min_coverage, profile=args.profile, learning_context=learning_context)
         result["delayed_schedule"] = delayed
         result["generated_at"] = now.isoformat()
         enrich_shareholder_counts(result, ShareholderCountProvider(), workers=args.workers)

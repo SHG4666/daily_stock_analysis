@@ -11,6 +11,7 @@
 """
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Dict, Optional
@@ -239,12 +240,14 @@ def run_market_review(
             elif not send_notification:
                 logger.info("已跳过推送通知 (--no-notify)")
             
+            learning_footer = _learning_footer(completed_session.isoformat() if completed_session else None)
+            review_with_learning = review_report + "\n\n" + learning_footer if learning_footer else review_report
             if return_structured:
                 return MarketReviewRunResult(
-                    report=review_report,
+                    report=review_with_learning,
                     market_review_payload=market_review_payload,
                 )
-            return review_report
+            return review_with_learning
         
     except Exception as e:
         logger.error(f"大盘复盘分析失败: {e}")
@@ -302,6 +305,14 @@ def _build_combined_market_review_payload(
     }
 
 
+def _learning_footer(completed_session=None):
+    if not os.getenv("SCREEN_LEARNING_REVIEW"):
+        return ""
+    from src.services.screen_learning_service import notification_summary
+    from src.core.trading_calendar import get_effective_trading_date
+    return notification_summary(completed_session or get_effective_trading_date("cn").isoformat())
+
+
 def _render_market_review_payload_markdown(
     payload: Dict[str, Any],
     *,
@@ -309,6 +320,9 @@ def _render_market_review_payload_markdown(
 ) -> str:
     """Render Markdown from the structured market-review payload for file/push compatibility."""
     body = _render_market_review_payload_body(payload)
+    learning_summary = _learning_footer(payload.get("completed_session"))
+    if learning_summary and learning_summary not in body:
+        body += "\n\n---\n\n" + learning_summary
     if payload.get("completed_session"):
         body = (f"> 定时延迟运行 · A股行情截至 {payload['completed_session']} · "
                 f"生成 {payload.get('generated_at', '')}。资讯按生成时刻查询，非历史回测。\n\n" + body)
