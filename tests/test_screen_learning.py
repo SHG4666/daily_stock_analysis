@@ -26,6 +26,15 @@ def test_next_session_is_monday_not_saturday_and_missing_monday_is_not_tuesday()
     assert core.forward_result(days, 0, "000001", 1)["status"] == "unavailable"
 
 
+def test_known_calendar_boundary_does_not_break_matured_results_or_guess_future_dates():
+    import exchange_calendars as xcals
+    calendar = xcals.get_calendar("XSHG")
+    last_dates = [d.date().isoformat() for d in calendar.sessions[-2:]]
+    days = [day(d) for d in last_dates]
+    assert core.forward_result(days, 0, "000001", 1)["status"] == "complete"
+    assert core.forward_result(days, 0, "000001", 3) == {"status": "pending", "expected_end": None}
+
+
 def test_directional_evaluation_and_market_control_include_losing_stocks():
     days = [day("2026-10-22"), day("2026-10-23")]
     days[1]["rows"]["000001"][:5] = [11., 10., 10., 11., 9.9]

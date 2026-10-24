@@ -105,6 +105,15 @@ def test_no_reconstruction_of_old_features_after_next_market_open(tmp_path, monk
     assert "selected" not in state["days"][0]
 
 
+def test_unknown_next_session_cannot_seed_old_report(tmp_path, monkeypatch):
+    client = old_report(tmp_path)
+    monkeypatch.setattr(entry, "following_sessions", lambda start, count: [])
+    state = empty_state(); state["days"] = [day("2026-10-23")]
+    state["days"][0].pop("selected")
+    entry.bootstrap_same_close(client, run(), state)
+    assert "selected" not in state["days"][0]
+
+
 def test_learning_only_workflow_cannot_call_models_or_send_messages():
     workflow = yaml.safe_load(Path(".github/workflows/00-daily-analysis.yml").read_text())
     steps = workflow["jobs"]["analyze"]["steps"]

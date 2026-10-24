@@ -20,7 +20,7 @@ from src.core.trading_calendar import get_effective_trading_date, get_market_now
 from src.services.screen_learning_service import (
     MAX_BYTES, empty_state, load_state, prepare, record_selection, save_state, validate_state,
 )
-from src.core.screen_learning import sessions
+from src.core.screen_learning import following_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +73,10 @@ def bootstrap_same_close(client, current_run, state):
     day = state["days"][-1]
     if "selected" in day:
         return
-    from datetime import date, timedelta
-    next_session = sessions(day["as_of"], date.fromisoformat(day["as_of"]) + timedelta(days=20))[1]
+    upcoming = following_sessions(day["as_of"], 1)
+    if not upcoming:
+        return  # 尚未公布下一开市日时，不能证明旧日报仍可安全引入。
+    next_session = upcoming[0]
     now = get_market_now("cn")
     if now.date().isoformat() > next_session or (now.date().isoformat() == next_session and now.hour >= 9):
         return

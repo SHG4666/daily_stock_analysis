@@ -32,6 +32,15 @@ def sessions(start, end):
     return [item.date().isoformat() for item in xcals.get_calendar("XSHG").sessions_in_range(start, end)]
 
 
+@lru_cache(maxsize=1024)
+def following_sessions(start, count):
+    # 只查询已公布日历。未知的次年开市日保持待定，不让远端边界阻断已到期结果。
+    import exchange_calendars as xcals
+    end = min(date.fromisoformat(start) + timedelta(days=50),
+              xcals.get_calendar("XSHG").last_session.date())
+    return sessions(start, end)[1:count+1]
+
+
 def features(days, index):
     day = days[index]
     expected = sessions(date.fromisoformat(day["as_of"]) - timedelta(days=45), day["as_of"])
@@ -87,10 +96,10 @@ def order_codes(codes, feature_map, rule):
 
 def forward_result(days, index, code, horizon):
     start = days[index]["as_of"]
-    expected = sessions(start, date.fromisoformat(start) + timedelta(days=50))[1:horizon+1]
+    expected = following_sessions(start, horizon)
     last = days[-1]["as_of"]
     if len(expected) != horizon or expected[-1] > last:
-        return {"status": "pending", "expected_end": expected[-1] if expected else None}
+        return {"status": "pending", "expected_end": expected[-1] if len(expected) == horizon else None}
     by_date = {item["as_of"]: item for item in days[index+1:]}
     bars, price = [], 100.
     for d in expected:
