@@ -127,7 +127,7 @@ def render_review_html(review):
     winners = "".join(f'<li><a href="{get_a_share_quote_url(item["code"])}" target="_blank" rel="noopener noreferrer">'
                        f'{esc(item["code"])}</a> · 后续5日 {item["return_pct"]:+.2f}% · '
                        f'启动前观察日 {esc(item["before_date"])}</li>' for item in review["winner_examples"])
-    summary = esc(review["summary_md"])
+    summary = esc(review["summary_md"].removeprefix("## 选股自我复盘\n\n"))
     return f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>选股自我复盘 · {esc(review['as_of'])}</title><style>body{{font:16px/1.7 system-ui;background:#f3f6f4;color:#203b32;margin:0}}main{{max-width:1150px;margin:auto;padding:32px 20px}}section{{background:white;border:1px solid #dce5e0;border-radius:14px;padding:22px;margin:20px 0}}pre{{white-space:pre-wrap;font:inherit}}table{{border-collapse:collapse;width:100%;font-size:14px}}td,th{{text-align:left;border-bottom:1px solid #dae4df;padding:10px}}.scroll{{overflow:auto}}a{{color:#147652}}</style>
 <main><h1>选股自我复盘</h1><p>行情日 {esc(review['as_of'])} · 先记录、后验证、再升级</p>
