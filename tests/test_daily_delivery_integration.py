@@ -65,7 +65,7 @@ def test_daily_workflow_requires_durable_intent_before_analysis_and_always_saves
     assert indexes[prepare["name"]] < indexes[intent["name"]] < indexes["执行股票分析"]
     assert intent["if"] == "steps.delivery.outputs.enabled == 'true'"
     assert intent["with"]["if-no-files-found"] == "error"
-    assert prepare["if"] == "steps.patterns.outputs.status != 'market_closed'"
+    assert prepare["if"] == "steps.patterns.outputs.status != 'market_closed' && github.event.inputs.mode != 'learning-only'"
     assert "force_run" not in prepare["env"]["DELIVERY_RESEND"]
     assert "resend_daily" in prepare["env"]["DELIVERY_RESEND"]
     assert "steps.patterns.outputs.as_of" in prepare["env"]["DELIVERY_AS_OF"]

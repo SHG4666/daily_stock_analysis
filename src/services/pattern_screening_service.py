@@ -47,7 +47,7 @@ def build_chart_bars(frame):
 
 
 def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
-                  deadline_seconds=1200, min_coverage=.9, profile="all_patterns"):
+                  deadline_seconds=1200, min_coverage=.9, profile="all_patterns", learning_context=None):
     if profile not in ("all_patterns", bottom_reversal.PROFILE):
         raise ValueError("unknown screening profile")
     bottom_focus = profile == bottom_reversal.PROFILE
@@ -152,6 +152,10 @@ def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
                                           -item["volume_ratio"], item["code"]))
     else:
         rank_candidates(candidates)
+    learning = {"applied": False, "rule": "baseline", "baseline_pool": [item["code"] for item in candidates]}
+    if bottom_focus:
+        from src.services.screen_learning_service import apply_learned_ranking
+        learning = apply_learned_ranking(candidates, learning_context, as_of)
     turnover_required = len(candidates) + excluded["换手率未明显提高"] + failures["turnover_data"]
     turnover_coverage = (1 - failures["turnover_data"] / turnover_required) if turnover_required else 1.0
     coverage = verified / len(eligible) if eligible else 1.0
@@ -161,6 +165,7 @@ def screen_market(provider, as_of, top_n=10, workers=4, min_amount=20_000_000,
         "status": "complete" if complete else "incomplete", "as_of": as_of.isoformat(),
         "ruleset_version": bottom_reversal.RULESET_VERSION if bottom_focus else RULESET_VERSION,
         "profile": profile,
+        "learning": learning,
         "turnover_required": turnover_required if bottom_focus else 0,
         "turnover_coverage": round(turnover_coverage, 4) if bottom_focus else None,
         "universe_count": len(universe), "eligible_count": len(eligible),

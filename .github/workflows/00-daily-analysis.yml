@@ -17,6 +17,7 @@ on:
           - full          # 完整分析（股票+大盘）
           - market-only   # 仅大盘复盘
           - stocks-only   # 仅股票分析
+          - learning-only # 仅学习建档/复盘，不调用分析模型、不发送消息
       force_run:
         description: '强制运行（跳过交易日检查）'
         required: false
@@ -73,10 +74,19 @@ jobs:
           key: pattern-qfq-v1-${{ runner.os }}-${{ github.run_id }}
           restore-keys: pattern-qfq-v1-${{ runner.os }}-
 
+      - name: 恢复学习档案并复盘历史选股
+        id: learning_prepare
+        if: vars.SCREEN_LEARNING_ENABLED != 'false' && vars.PATTERN_SCREEN_ENABLED != 'false' && github.event.inputs.mode != 'market-only'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python scripts/screen_learning.py prepare
+
       - name: 按长期下跌底部放量与换手率筛选A股
         id: patterns
-        if: vars.PATTERN_SCREEN_ENABLED != 'false' && github.event.inputs.mode != 'market-only'
+        if: vars.PATTERN_SCREEN_ENABLED != 'false' && github.event.inputs.mode != 'market-only' && github.event.inputs.mode != 'learning-only'
         env:
+          SCREEN_LEARNING_CONTEXT: ${{ steps.learning_prepare.outcome == 'success' && 'reports/screen_learning/context.json' || '' }}
           PATTERN_SCREEN_PROFILE: ${{ vars.PATTERN_SCREEN_PROFILE || 'bottom_reversal' }}
           PATTERN_SCREEN_TOP_N: ${{ vars.PATTERN_SCREEN_TOP_N || '10' }}
           PATTERN_SCREEN_WORKERS: ${{ vars.PATTERN_SCREEN_WORKERS || '4' }}
@@ -87,7 +97,7 @@ jobs:
 
       - name: 准备每日飞书发送记录
         id: delivery
-        if: steps.patterns.outputs.status != 'market_closed'
+        if: steps.patterns.outputs.status != 'market_closed' && github.event.inputs.mode != 'learning-only'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DELIVERY_AS_OF: ${{ steps.patterns.outputs.as_of }}
@@ -115,7 +125,10 @@ jobs:
           retention-days: 30
       
       - name: 执行股票分析
+        if: github.event.inputs.mode != 'learning-only'
         env:
+          SCREEN_LEARNING_MODEL_AUDIT: ${{ steps.learning_prepare.outcome == 'success' && 'reports/screen_learning/model_audit.json' || '' }}
+          SCREEN_LEARNING_REVIEW: ${{ steps.learning_prepare.outcome == 'success' && 'reports/screen_learning/review.json' || '' }}
           # 形态规则股票池只作用于本次运行，不覆盖持久STOCK_LIST。
           MODE: ${{ github.event.inputs.mode || 'full' }}
           PATTERN_SCREEN_ACTIVE: ${{ vars.PATTERN_SCREEN_ENABLED != 'false' && github.event.inputs.mode != 'market-only' }}
@@ -572,6 +585,33 @@ jobs:
           path: reports/daily_delivery/receipt.json
           if-no-files-found: error
           retention-days: 30
+
+      - name: 定稿学习记录（仅有成功凭证才记实际推送）
+        id: learning_finalize
+        if: always() && steps.learning_prepare.outcome == 'success'
+        continue-on-error: true
+        run: python scripts/screen_learning.py finalize
+
+      - name: 保存持续学习档案
+        id: learning_upload
+        if: always() && steps.learning_finalize.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: screen-learning-state-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/screen_learning/state.json.gz
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 验证学习专用运行结果
+        if: always() && github.event.inputs.mode == 'learning-only'
+        env:
+          PREPARE_OUTCOME: ${{ steps.learning_prepare.outcome }}
+          FINALIZE_OUTCOME: ${{ steps.learning_finalize.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.learning_upload.outcome }}
+        run: |
+          test "$PREPARE_OUTCOME" = success
+          test "$FINALIZE_OUTCOME" = success
+          test "$UPLOAD_OUTCOME" = success
 
       - name: 上传分析报告
         uses: actions/upload-artifact@v6
