@@ -1,14 +1,15 @@
-"""每日底部放量反弹规则：可复核的筛选假设，不代表收益预测。"""
+"""每日底部反转及上涨中继规则：可复核的筛选假设，不代表收益预测。"""
 import numpy as np
 import pandas as pd
 
 from src.pattern_screener import PatternSignal, ScreeningDataError, volume_ratio
+from src import trend_continuation
 
 PROFILE = "bottom_reversal"
-RULESET_VERSION = "4.0-bottom-rebound"
+RULESET_VERSION = "5.0-pullback-continuation"
 SIGNAL_NAME = "长期下跌后底部放量上涨"
 REBOUND_SIGNAL_NAME = "探底回升放量突破"
-SIGNAL_NAMES = (SIGNAL_NAME, REBOUND_SIGNAL_NAME)
+SIGNAL_NAMES = (SIGNAL_NAME, REBOUND_SIGNAL_NAME, trend_continuation.SIGNAL_NAME)
 LIMITS = {
     "decline_sessions": 60,
     "prior_decline_max": -.15,
@@ -26,6 +27,7 @@ LIMITS = {
     "rebound_prior_five_return_max": .15,
     "rebound_breakout_sessions": 5,
     "rebound_cross_sessions": 5,
+    "trend_continuation": dict(trend_continuation.LIMITS),
 }
 
 
@@ -70,18 +72,30 @@ def inspect_bottom_reversal(frame):
         "prior_five_session_return": float(close.iloc[-2] / close.iloc[-7] - 1),
     }
     rebound = _inspect_rebound(frame, metrics)
+    continuation = trend_continuation.inspect_continuation(frame)
     metrics["rebound"] = rebound
+    metrics["continuation"] = continuation
     metrics["setup"] = REBOUND_SIGNAL_NAME if rebound["matched"] else SIGNAL_NAME
-    checks = (
+    background_checks = (
         (metrics["prior_decline"] <= LIMITS["prior_decline_max"], "此前60日跌幅不足15%"),
         (metrics["ma20_decline"] <= LIMITS["ma20_decline_max"], "缺少持续下跌背景"),
         (metrics["bottom_distance"] <= LIMITS["bottom_distance_max"] or rebound["matched"], "离60日低点过远"),
+    )
+    common_checks = (
         (today.close > today.open and metrics["daily_return"] >= LIMITS["daily_return_min"], "当日上涨不足2%或非阳线"),
         (metrics["volume_ratio"] >= LIMITS["volume_ratio_min"], "当日放量不足1.8倍"),
         (metrics["close_position"] >= LIMITS["close_position_min"], "收盘回落过多"),
+    )
+    checks = background_checks + common_checks + (
         (metrics["prior_five_session_return"] <= LIMITS["prior_five_session_return_max"] or rebound["matched"], "此前5日已涨超10%"),
     )
-    return metrics, next((reason for passed, reason in checks if not passed), None)
+    rejection = next((reason for passed, reason in checks if not passed), None)
+    if rejection and continuation["matched"]:
+        # 新中继分支不要求此刻仍在长期下跌，但不能绕过当日量价及后续实际换手率核验。
+        rejection = next((reason for passed, reason in common_checks if not passed), None)
+        if rejection is None:
+            metrics["setup"] = trend_continuation.SIGNAL_NAME
+    return metrics, rejection
 
 
 def confirm_turnover(frame, turnover):
@@ -111,7 +125,7 @@ def confirm_turnover(frame, turnover):
 
 def reversal_signal(metrics):
     evidence = {
-        "此前60日跌幅": f"{metrics['prior_decline']:.1%}",
+        "此前60日涨跌": f"{metrics['prior_decline']:.1%}",
         "20日均线40日变化": f"{metrics['ma20_decline']:.1%}",
         "距离60日低点": f"{metrics['bottom_distance']:.1%}",
         "当日涨幅": f"{metrics['daily_return']:.1%}",
@@ -125,4 +139,13 @@ def reversal_signal(metrics):
         evidence.update({"探底日期": rebound["low_date"], "低点距今交易日": rebound["low_age"],
                          "突破前5日高点": round(rebound["resistance"], 3),
                          "均线确认": "近5日MA5新金叉MA10；两线向上，收盘站上MA5/10/20"})
+    elif metrics.get("setup") == trend_continuation.SIGNAL_NAME:
+        continuation = metrics["continuation"]
+        evidence.update({"前高日期": continuation["peak_date"], "突破前高": round(continuation["peak"], 3),
+                         "整理交易日": continuation["base_sessions"],
+                         "前段上涨": f"{continuation['impulse_gain']:.1%}",
+                         "回调幅度": f"{continuation['pullback']:.1%}",
+                         "整理均量/上涨末5日均量": round(continuation["base_volume_ratio"], 2),
+                         "突破幅度": f"{continuation['breakout_margin']:.1%}",
+                         "均线确认": "MA20/60向上；回踩MA10、守住MA20支撑，收盘站上MA5/10/20/60"})
     return PatternSignal(metrics.get("setup", SIGNAL_NAME), evidence)
