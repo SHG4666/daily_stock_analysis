@@ -238,7 +238,7 @@ def render_html(result):
 <ul>{evidence}</ul><p class="muted">待人工查看K线确认；随后核查公告、估值与交易可行性。</p></article>''')
     counts = Counter(signal["name"] for candidate in result.get("candidates", []) for signal in candidate["signals"])
     bottom_focus = result.get("profile") == bottom_reversal.PROFILE
-    pattern_names = (bottom_reversal.SIGNAL_NAME,) if bottom_focus else PATTERN_NAMES
+    pattern_names = bottom_reversal.SIGNAL_NAMES if bottom_focus else PATTERN_NAMES
     buttons = '<button class="active" data-filter="">全部</button>' + "".join(
         f'<button data-filter="{name}">{name} <b>{counts[name]}</b></button>' for name in pattern_names
     )
@@ -275,8 +275,11 @@ def render_html(result):
     if bottom_focus:
         focus_note = ('<p><strong>当前每日策略：长期下跌后底部放量上涨。</strong>'
                       '此前60日跌幅至少15%，20日均线较40个交易日前至少下降8%；'
-                      '当日收盘距此前60日低点不超过20%，涨幅至少2%且收阳线，'
-                      '成交量至少为此前20日均量的1.8倍，收盘处于日内振幅上方35%，此前5日涨幅不超过10%。'
+                      '涨幅至少2%且收阳线，成交量至少为此前20日均量的1.8倍，收盘处于日内振幅上方35%。'
+                      '原底部反弹要求距60日低点不超过20%、此前5日涨幅不超过10%。'
+                      '新增探底回升分支：60日低点在此前2–10个交易日内，当日不再破底；'
+                      '近5日MA5新金叉MA10、两线向上，收盘站上MA5/10/20并突破此前5日最高价；'
+                      '仅此分支允许距低点不超过30%、此前5日涨幅不超过15%。'
                       '实际换手率至少为上一日的1.2倍、此前5日均值的1.5倍。'
                       '按换手率提升倍数、量比排序；原图形态不再作为每日入选的替代条件。'
                       f'换手率核验覆盖 {result.get("turnover_coverage", 0) or 0:.1%}。'

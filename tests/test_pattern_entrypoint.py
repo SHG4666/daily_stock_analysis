@@ -65,7 +65,8 @@ def test_bottom_profile_reaches_daily_entrypoint_and_github_stock_handoff(tmp_pa
     assert entry.main(["--profile", "bottom_reversal", "--output-dir", str(tmp_path)]) == 0
     result = json.loads((tmp_path / "screen.json").read_text())
     assert result["profile"] == "bottom_reversal"
-    assert result["ruleset_version"] == "3.0-bottom-reversal"
+    from src.bottom_reversal import RULESET_VERSION
+    assert result["ruleset_version"] == RULESET_VERSION
     assert result["selected"][0]["bottom_reversal"]["turnover"] == 2.2
     assert "stock_codes=002727\n" in (tmp_path / "handoff").read_text()
     assert "status=complete\n" in (tmp_path / "handoff").read_text()
