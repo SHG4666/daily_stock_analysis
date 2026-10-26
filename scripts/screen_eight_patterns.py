@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""收盘后按底部反弹或原图形态模式筛选；独立运行不调用AI或发送通知。"""
+"""收盘后按底部反转/上涨中继或原图形态筛选；独立运行不调用AI或发送通知。"""
 import argparse
 import json
 import logging

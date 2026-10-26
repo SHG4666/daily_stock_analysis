@@ -79,7 +79,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python scripts/screen_learning.py prepare
 
-      - name: 按长期下跌底部放量与换手率筛选A股
+      - name: 按底部反转与上涨中继量价筛选A股
         id: patterns
         if: vars.PATTERN_SCREEN_ENABLED != 'false' && github.event.inputs.mode != 'market-only' && github.event.inputs.mode != 'learning-only'
         env:

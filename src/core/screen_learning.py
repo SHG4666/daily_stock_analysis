@@ -1,4 +1,4 @@
-"""有时间边界的选股反馈与有限策略升级。只优化候选排序，不修改底部硬条件。"""
+"""有时间边界的选股反馈与有限策略升级。只优化候选排序，不修改各分支硬条件。"""
 import hashlib
 import json
 import math
@@ -309,7 +309,7 @@ def summary_markdown(review):
               "cooldown": "等待新的独立观察数据", "waiting_weekly_review": "等待周度验证",
               "no_improvement": "未发现可靠改善", "validation_failed": "验证未通过，保留原排序"}.get(policy["status"], policy["status"])
     lines.append(f"自动优化：{status}，成熟记录{policy['mature_days']}/{MIN_DAYS}个交易日；"
-                 f"当前排序：{RULES.get(policy['rule'], '原换手率提升排序')}。底部硬条件及看空否决保持。")
+                 f"当前排序：{RULES.get(policy['rule'], '原换手率提升排序')}。各分支硬条件及看空否决保持。")
     lines.append(review["note"])
     return "\n\n".join(lines)
 
