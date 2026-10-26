@@ -211,7 +211,7 @@ daily_stock_analysis/
 
 ### 5. 完成！
 
-GitHub Actions默认每个工作日 **18:07（北京时间）** 自动执行。
+GitHub Actions默认每个工作日 **18:00（北京时间）** 自动执行。
 
 ---
 
@@ -647,7 +647,7 @@ python main.py --workers 5            # 指定并发数
 ```yaml
 schedule:
   # UTC 时间，北京时间 = UTC + 8
-  - cron: '7 10 * * 1-5'   # 周一到周五 18:07（北京时间），避开整点调度高峰
+  - cron: '0 10 * * 1-5'   # 周一到周五 18:00（北京时间）
 ```
 
 常用时间对照：

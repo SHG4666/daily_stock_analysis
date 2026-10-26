@@ -1,9 +1,9 @@
 name: 每日股票分析
 
 on:
-  # 定时触发 - 工作日北京时间 18:07 (UTC 10:07)，避开整点调度高峰
+  # 计划触发 - 工作日北京时间 18:00 (UTC 10:00)，实际发送需等待调度和分析完成
   schedule:
-    - cron: '7 10 * * 1-5'     # 周一到周五，UTC 10:07 = 北京时间 18:07
+    - cron: '0 10 * * 1-5'     # 周一到周五，交易日检查自动跳过休市
   
   # 手动触发
   workflow_dispatch:
@@ -45,9 +45,6 @@ jobs:
     timeout-minutes: ${{ fromJSON(vars.ANALYSIS_TIMEOUT_MINUTES || '60') }}
     
     steps:
-      - name: 随机延迟（避免固定时间访问）
-        run: sleep $((RANDOM % 60))  # 随机延迟0-60秒启动
-      
       - name: 检出代码
         uses: actions/checkout@v5
       
