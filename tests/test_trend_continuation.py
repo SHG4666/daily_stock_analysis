@@ -87,7 +87,14 @@ def test_continuation_rejects_incomplete_or_deteriorating_setups(case, check):
     frame = prepare_bars(frame, AS_OF)
     inspected = trend.inspect_continuation(frame)
     assert not inspected["matched"] and not inspected["checks"][check]
-    assert inspect_bottom_reversal(frame)[1] is not None
+    metrics, rejection = inspect_bottom_reversal(frame)
+    if case == "weak_advance":
+        # 中继所需的前段涨幅不足，但收敛后的首段突破可由新分支独立确认。
+        from src.pattern_screener import VOLUME_BREAKOUT_NAME
+        assert rejection is None and metrics["setup"] == VOLUME_BREAKOUT_NAME
+        assert metrics["volume_breakout"]["matched"]
+    else:
+        assert rejection is not None
 
 
 @pytest.mark.parametrize("case,reason", [
