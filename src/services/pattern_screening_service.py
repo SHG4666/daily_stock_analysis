@@ -273,7 +273,7 @@ def render_html(result):
         no_candidates = '<p class="empty">当前A股休市，未执行市场筛选，不生成今天的新候选。</p>'
     focus_note = ''
     if bottom_focus:
-        focus_note = ('<p><strong>当前每日策略：底部反转与上涨中继。</strong>'
+        focus_note = ('<p><strong>当前每日策略：底部反转、企稳突破与上涨中继。</strong>'
                       '两条底部反转分支要求此前60日跌幅至少15%，20日均线较40个交易日前至少下降8%；'
                       '涨幅至少2%且收阳线，成交量至少为此前20日均量的1.8倍，收盘处于日内振幅上方35%。'
                       '原底部反弹要求距60日低点不超过20%、此前5日涨幅不超过10%。'
@@ -285,6 +285,9 @@ def render_html(result):
                       '回踩MA10附近且收盘守住MA20下方3%范围，放量突破前高0.5%–8%，'
                       '当日量至少为整理均量1.5倍，收盘站上MA5/10/20/60，短线抬升；'
                       '距启动低点涨幅不超过60%、MA20乖离不超过25%、正向开盘跳空不超过5%。'
+                      '企稳突破分支复用“均线上方放量突破”：突破前MA5/10/20/30收敛，MA20走平或抬升，'
+                      '前收/今开在线上，当日阳线实体及涨幅均至少3%，量比至少2倍，收盘突破前20日高点至少0.5%；'
+                      '收盘位于日振幅上方25%、实体占比至少50%，MA20乖离不超过15%、5日涨幅不超过20%、正跳空不超过5%。'
                       '全部分支都要求上述当日阳线、涨幅、量比及收盘质量，并核验真实换手率。'
                       '实际换手率至少为上一日的1.2倍、此前5日均值的1.5倍。'
                       '按换手率提升倍数、量比排序；原图形态不再作为每日入选的替代条件。'
@@ -294,7 +297,7 @@ def render_html(result):
 <title>技术形态候选 · {escape(result['as_of'])}</title>
 <style>*{{box-sizing:border-box}}body{{margin:0;background:#f4f5f3;color:#20322f;font:15px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}}main{{max-width:1200px;margin:auto;padding:44px 28px}}h1{{font-size:34px;line-height:1.3;margin:10px 0}}h2{{font-size:22px}}.eyebrow{{color:#56746c;font-size:13px;letter-spacing:2px}}.muted,small{{color:#63756e}}.status{{background:{'#deeee8' if complete else '#f4e6cc'};padding:14px 18px;border-radius:12px}}.stats{{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:24px 0}}.stat{{background:#fff;padding:18px;border-radius:12px}}.stat b{{display:block;font-size:30px}}nav{{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0}}button{{border:1px solid #ccd8d1;background:#fff;padding:9px 14px;border-radius:20px;color:#24483e;cursor:pointer}}button.active{{background:#244f43;color:#fff}}.grid{{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}}article{{background:#fff;border:1px solid #dde4df;border-radius:14px;padding:22px}}h3{{margin:0;font-size:21px}}.card-top{{display:flex;justify-content:space-between;gap:12px}}a{{color:#217261}}.tags{{color:#277d68;font-weight:600}}.selected{{display:inline-block;background:#dceee7;font-size:12px;padding:2px 8px;border-radius:8px;margin-left:8px}}article p,li{{font-size:14px}}ul{{padding-left:20px}}.note{{background:#e8ece8;padding:22px;border-radius:12px;margin-top:28px}}.empty{{padding:30px;background:white;border-radius:12px}}[hidden]{{display:none}}@media(max-width:700px){{main{{padding:24px 16px}}h1{{font-size:27px}}.grid{{grid-template-columns:1fr}}.stats{{grid-template-columns:repeat(2,1fr)}}.card-top{{display:block}}}}</style>
 <main><div class="eyebrow">DAILY STOCK ANALYSIS / 技术形态筛选</div><h1>技术形态候选</h1>
-<p class="muted">行情截止 {escape(result['as_of'])} · 沪深京 A 股 · 规则版本 {ruleset_version} · {'底部反转及上涨中继筛选' if bottom_focus else '原图八形态及扩展突破规则'}。</p>
+<p class="muted">行情截止 {escape(result['as_of'])} · 沪深京 A 股 · 规则版本 {ruleset_version} · {'底部反转、企稳突破及上涨中继筛选' if bottom_focus else '原图八形态及扩展突破规则'}。</p>
 {scope_line}
 {delay_line}
 <div class="status">{status} · 当日行情日期核验覆盖 {result.get('coverage',0):.1%}</div>

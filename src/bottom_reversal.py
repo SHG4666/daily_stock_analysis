@@ -1,15 +1,18 @@
-"""每日底部反转及上涨中继规则：可复核的筛选假设，不代表收益预测。"""
+"""每日底部反转、企稳突破及上涨中继规则：可复核假设，不代表收益预测。"""
 import numpy as np
 import pandas as pd
 
-from src.pattern_screener import PatternSignal, ScreeningDataError, volume_ratio
+from src.pattern_screener import (
+    PatternSignal, ScreeningDataError, volume_ratio, VOLUME_BREAKOUT_NAME,
+    VOLUME_BREAKOUT_LIMITS, inspect_prepared_volume_breakout,
+)
 from src import trend_continuation
 
 PROFILE = "bottom_reversal"
-RULESET_VERSION = "5.0-pullback-continuation"
+RULESET_VERSION = "6.0-base-volume-breakout"
 SIGNAL_NAME = "长期下跌后底部放量上涨"
 REBOUND_SIGNAL_NAME = "探底回升放量突破"
-SIGNAL_NAMES = (SIGNAL_NAME, REBOUND_SIGNAL_NAME, trend_continuation.SIGNAL_NAME)
+SIGNAL_NAMES = (SIGNAL_NAME, REBOUND_SIGNAL_NAME, trend_continuation.SIGNAL_NAME, VOLUME_BREAKOUT_NAME)
 LIMITS = {
     "decline_sessions": 60,
     "prior_decline_max": -.15,
@@ -28,6 +31,7 @@ LIMITS = {
     "rebound_breakout_sessions": 5,
     "rebound_cross_sessions": 5,
     "trend_continuation": dict(trend_continuation.LIMITS),
+    "volume_breakout": dict(VOLUME_BREAKOUT_LIMITS),
 }
 
 
@@ -73,8 +77,10 @@ def inspect_bottom_reversal(frame):
     }
     rebound = _inspect_rebound(frame, metrics)
     continuation = trend_continuation.inspect_continuation(frame)
+    breakout = inspect_prepared_volume_breakout(frame)
     metrics["rebound"] = rebound
     metrics["continuation"] = continuation
+    metrics["volume_breakout"] = breakout
     metrics["setup"] = REBOUND_SIGNAL_NAME if rebound["matched"] else SIGNAL_NAME
     background_checks = (
         (metrics["prior_decline"] <= LIMITS["prior_decline_max"], "此前60日跌幅不足15%"),
@@ -90,11 +96,11 @@ def inspect_bottom_reversal(frame):
         (metrics["prior_five_session_return"] <= LIMITS["prior_five_session_return_max"] or rebound["matched"], "此前5日已涨超10%"),
     )
     rejection = next((reason for passed, reason in checks if not passed), None)
-    if rejection and continuation["matched"]:
-        # 新中继分支不要求此刻仍在长期下跌，但不能绕过当日量价及后续实际换手率核验。
+    if rejection and (continuation["matched"] or breakout["matched"]):
+        # 启动/中继分支不要求此刻仍在长期下跌，仍须通过当日量价及后续实际换手率核验。
         rejection = next((reason for passed, reason in common_checks if not passed), None)
         if rejection is None:
-            metrics["setup"] = trend_continuation.SIGNAL_NAME
+            metrics["setup"] = trend_continuation.SIGNAL_NAME if continuation["matched"] else VOLUME_BREAKOUT_NAME
     return metrics, rejection
 
 
@@ -148,4 +154,11 @@ def reversal_signal(metrics):
                          "整理均量/上涨末5日均量": round(continuation["base_volume_ratio"], 2),
                          "突破幅度": f"{continuation['breakout_margin']:.1%}",
                          "均线确认": "MA20/60向上；回踩MA10、守住MA20支撑，收盘站上MA5/10/20/60"})
+    elif metrics.get("setup") == VOLUME_BREAKOUT_NAME:
+        breakout = metrics["volume_breakout"]["evidence"]
+        evidence.update({key: breakout[key] for key in (
+            "突破前20日高点", "突破幅度百分比", "阳线实体百分比",
+            "MA20乖离百分比", "5日累计涨幅百分比", "突破前MA20三日变化百分比",
+        )})
+        evidence["均线确认"] = "MA5/10/20/30收敛，MA20走平或抬升；前收/今开在线上，收盘放量突破"
     return PatternSignal(metrics.get("setup", SIGNAL_NAME), evidence)

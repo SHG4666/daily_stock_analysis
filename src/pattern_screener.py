@@ -151,11 +151,15 @@ def _inspect_volume_breakout(frame, ma):
     }
 
 
-def inspect_volume_breakout(bars: pd.DataFrame, as_of: date) -> dict:
-    """返回同一检测逻辑的逐条件解释，供离线样本复算，不联网。"""
-    frame = prepare_bars(bars, as_of)
+def inspect_prepared_volume_breakout(frame: pd.DataFrame) -> dict:
+    """复用同一检测器；调用者必须先用prepare_bars核验并截断目标日。"""
     ma = {window: frame.close.rolling(window).mean() for window in (5, 10, 20, 30)}
     return _inspect_volume_breakout(frame, ma)
+
+
+def inspect_volume_breakout(bars: pd.DataFrame, as_of: date) -> dict:
+    """返回同一检测逻辑的逐条件解释，供离线样本复算，不联网。"""
+    return inspect_prepared_volume_breakout(prepare_bars(bars, as_of))
 
 
 def detect_patterns(bars: pd.DataFrame, as_of: date, *, include_extensions=True) -> list[PatternSignal]:
