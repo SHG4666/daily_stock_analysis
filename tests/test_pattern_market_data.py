@@ -89,9 +89,9 @@ def test_universe_pages_must_be_complete_and_unique(tmp_path, incomplete):
     with patch("requests.get", side_effect=get):
         if incomplete:
             with pytest.raises(ValueError, match="不完整"):
-                provider.get_universe()
+                provider._get_sina_universe()
         else:
-            universe = provider.get_universe()
+            universe = provider._get_sina_universe()
             assert len(universe) == 1000
             assert [item["change_percent"] for item in universe[:4]] == [None, None, None, 2.5]
 
@@ -206,5 +206,5 @@ def test_http_failure_and_invalid_universe_count_do_not_retry(tmp_path):
     assert get.call_count == 1 and not sleep.called
     with patch("requests.get", return_value=response("10")) as get:
         with pytest.raises(ValueError, match="数量异常"):
-            PatternMarketData(tmp_path).get_universe()
+            PatternMarketData(tmp_path)._get_sina_universe()
     assert get.call_count == 1

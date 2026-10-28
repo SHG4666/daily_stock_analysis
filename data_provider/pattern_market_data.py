@@ -5,14 +5,14 @@ import math
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
 import requests
 
-from data_provider.akshare_fetcher import _to_sina_tx_symbol
-from src.core.trading_calendar import MarketPhase, get_market_now, infer_market_phase
+from data_provider.akshare_fetcher import _normalize_tencent_volume, _parse_tencent_amount, _to_sina_tx_symbol
+from src.core.trading_calendar import MarketPhase, get_effective_trading_date, get_market_now, infer_market_phase
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 class PatternMarketData:
     """复用既有代码市场映射；不把腾讯第六列成交量误作成交额。"""
     source_name = "腾讯前复权日K"
-    universe_source = "新浪沪深京A股实时列表"
-    universe_url = "https://vip.stock.finance.sina.com.cn/mkt/#hs_a"
+    universe_source = "腾讯沪深京A股列表及逐股收盘报价"
+    universe_url = "https://stockapp.finance.qq.com/mstats/#mod=list&id=hs_hsj"
     history_url = "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get"
     turnover_source = "腾讯日K实际换手率"
     turnover_url = history_url
@@ -45,6 +45,101 @@ class PatternMarketData:
                 time.sleep(1)
 
     def get_universe(self) -> list[dict]:
+        """主源完整成功后才接收；失败时整批切换，不拼接两家的部分结果。"""
+        failures = []
+        for source, fetch, label, url in (
+            ("tencent", self._get_tencent_universe, "腾讯沪深京A股列表及逐股收盘报价",
+             "https://stockapp.finance.qq.com/mstats/#mod=list&id=hs_hsj"),
+            ("sina", self._get_sina_universe, "新浪沪深京A股实时列表（腾讯不可用时备用）",
+             "https://vip.stock.finance.sina.com.cn/mkt/#hs_a"),
+        ):
+            try:
+                result = fetch()
+            except (requests.RequestException, ValueError, TypeError, KeyError) as exc:
+                failures.append(f"{source}={type(exc).__name__}")
+                logger.warning("股票列表源不可用 source=%s error=%s", source, type(exc).__name__)
+                continue
+            self.universe_source, self.universe_url = label, url
+            logger.info("股票列表获取成功 source=%s count=%s", source, len(result))
+            return result
+        logger.error("股票列表所有数据源失败：%s", ", ".join(failures))
+        raise ValueError("股票列表所有数据源失败：" + ", ".join(failures))
+
+    def _get_tencent_universe(self) -> list[dict]:
+        # AKShare stock_zh_a_spot_tx uses this listing endpoint. Fetch raw
+        # responses with the existing bounded HTTP client, rather than losing
+        # duplicate/missing-page evidence through its drop_duplicates step.
+        url = "https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList"
+        page_size = 200
+
+        def page(offset):
+            response = self._get(url, stage=f"tencent_list_{offset}", attempts=2, params={
+                "_appver": "11.17.0", "board_code": "aStock", "sort_type": "price",
+                "direct": "down", "offset": str(offset), "count": str(page_size),
+            })
+            payload = response.json()
+            if not isinstance(payload, dict) or payload.get("code") != 0:
+                raise ValueError("腾讯列表业务返回失败")
+            data = payload["data"]
+            count = int(data["total"])
+            if not 1000 <= count <= 15000 or not isinstance(data["rank_list"], list):
+                raise ValueError("腾讯股票列表数量或格式异常")
+            if len(data["rank_list"]) != min(page_size, count - offset):
+                raise ValueError("腾讯股票列表分页不完整")
+            return count, data["rank_list"]
+
+        count, first = page(0)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            pages = list(pool.map(page, range(page_size, count, page_size)))
+        if any(total != count for total, _ in pages):
+            raise ValueError("腾讯股票列表分页总数变化")
+        listed = first + [item for _, rows in pages for item in rows]
+        symbols = [item["code"] for item in listed]
+        if len(symbols) != count or len(set(symbols)) != count:
+            raise ValueError("腾讯股票列表分页不完整或重复")
+        for symbol in symbols:
+            if (not isinstance(symbol, str)
+                    or not re.fullmatch(r"(?:sh|sz|bj)(?:00|30|60|68|43|83|87|88|92)\d{4}", symbol)
+                    or _to_sina_tx_symbol(symbol[2:]) != symbol):
+                raise ValueError("腾讯列表证券代码或市场不一致")
+
+        as_of = get_effective_trading_date("cn", current_time=get_market_now("cn"))
+
+        def quotes(chunk):
+            response = self._get("https://qt.gtimg.cn/q=" + ",".join(chunk),
+                                 stage="tencent_universe_quotes", attempts=2)
+            response.encoding = "gbk"
+            expected, parsed = set(chunk), {}
+            for symbol, body in re.findall(r'v_([a-z]+\d+)="([^\"]*)"', response.text):
+                if symbol not in expected or symbol in parsed:
+                    raise ValueError("腾讯批量报价错码或重复")
+                fields = body.split("~")
+                if len(fields) < 45 or fields[2] != symbol[2:] or not fields[1].strip():
+                    raise ValueError("腾讯批量报价身份或字段异常")
+                stamp = datetime.strptime(fields[30], "%Y%m%d%H%M%S")
+                if stamp.date() != as_of or stamp.hour < 15:
+                    raise ValueError("腾讯批量报价不是目标日完整收盘行情")
+                values = [float(fields[5]), float(fields[3]),
+                          _parse_tencent_amount(fields), _normalize_tencent_volume(fields)]
+                if not all(value is not None and math.isfinite(value) and value >= 0 for value in values):
+                    raise ValueError("腾讯批量报价数值异常")
+                change = float(fields[32]) if fields[32] not in ("", "--", "-") else None
+                if change is not None and not math.isfinite(change):
+                    change = None
+                parsed[symbol] = dict(zip(("open", "price", "amount", "volume"), values),
+                                      code=symbol[2:], name=fields[1].strip(), change_percent=change)
+            if set(parsed) != expected:
+                raise ValueError("腾讯批量报价缺失")
+            return parsed
+
+        chunks = [symbols[i:i+page_size] for i in range(0, count, page_size)]
+        complete = {}
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            for batch in pool.map(quotes, chunks):
+                complete.update(batch)
+        return [complete[symbol] for symbol in symbols]
+
+    def _get_sina_universe(self) -> list[dict]:
         from akshare.utils import demjson
         base = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center."
         response = self._get(base + "getHQNodeStockCount", stage="sina_count", attempts=2, params={"node": "hs_a"})
