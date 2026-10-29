@@ -2,7 +2,7 @@
 
 每日工作流可能先手动补跑，几个小时后又收到同一交易日的 `schedule` 事件。`concurrency: stock-analysis` 只能让两次运行依次执行；进程内 `NOTIFICATION_DEDUP_TTL_SECONDS` 无法记住另一个 runner 已发送的报告。
 
-`.github/workflows/00-daily-analysis.yml` 使用发送前意向（intent）和发送后回执（receipt）artifact 保存跨运行证据，默认按 **工作流、行情日、飞书目标指纹、报告组件** 判断是否允许发送。触发方式、run ID、股票名单、模型文案和规则版本均不构成另一个发送名额。默认cron计划为工作日北京时间18:00，休市由交易日检查跳过，本功能不保证GitHub准时触发，也没有新增自动补跑调度器。
+`.github/workflows/00-daily-analysis.yml` 使用发送前意向（intent）和发送后回执（receipt）artifact 保存跨运行证据，默认按 **工作流、行情日、飞书目标指纹、报告组件** 判断是否允许发送。触发方式、run ID、股票名单、模型文案和规则版本均不构成另一个发送名额。默认cron计划为工作日北京时间16:00，休市由交易日检查跳过，本功能不保证GitHub准时触发，也没有新增自动补跑调度器。
 
 ## 发送顺序
 

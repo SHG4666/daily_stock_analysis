@@ -414,19 +414,19 @@ git push
 
 ### Schedule Details
 
-Default plan: start **Monday to Friday, 18:00 Beijing Time**; the trading-day check skips market holidays. GitHub scheduling may be delayed or dropped, and screening/model analysis takes additional time, so message delivery at exactly 18:00 is not guaranteed.
+Default plan: start **Monday to Friday, 16:00 Beijing Time**; the trading-day check skips market holidays. GitHub scheduling may be delayed or dropped, and screening/model analysis takes additional time, so message delivery at exactly 16:00 is not guaranteed.
 
 Modify time: Edit cron expression in `.github/workflows/00-daily-analysis.yml`:
 
 ```yaml
 schedule:
-  - cron: '0 10 * * 1-5'  # UTC 10:00, +8 = Beijing time 18:00
+  - cron: '0 8 * * 1-5'   # UTC 08:00, +8 = Beijing time 16:00
 ```
 
 Common cron examples:
 | Expression | Description |
 |--------|------|
-| `'0 10 * * 1-5'` | Mon-Fri 18:00 (Beijing, current default) |
+| `'0 8 * * 1-5'` | Mon-Fri 16:00 (Beijing, current default) |
 | `'30 7 * * 1-5'` | Mon-Fri 15:30 (Beijing) |
 | `'0 10 * * *'` | Daily 18:00 (Beijing) |
 | `'0 2 * * 1-5'` | Mon-Fri 10:00 (Beijing) |
