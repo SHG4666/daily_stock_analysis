@@ -63,7 +63,7 @@
 
 ## 每日流程
 
-`.github/workflows/00-daily-analysis.yml` 计划于北京时间周一至周五18:00运行。GitHub定时触发可能延迟或漏跑，启用状态和手动运行成功不等于定时触发已经验收；需确认Actions中出现`event=schedule`的运行记录。18:00是计划启动时间：任务还需要筛选及模型分析，实际消息到达会晚于启动；更改cron不能保证18:00准点收到。已移除工作流启动时额外0–60秒随机等待。计划按工作日触发，由交易日检查跳过节假日；此时间只影响GitHub Actions，不改变本地`SCHEDULE_TIME`配置。
+`.github/workflows/00-daily-analysis.yml` 计划于北京时间周一至周五16:00运行。GitHub定时触发可能延迟或漏跑，启用状态和手动运行成功不等于定时触发已经验收；需确认Actions中出现`event=schedule`的运行记录。16:00是计划启动时间：任务还需要筛选及模型分析，实际消息到达会晚于启动；更改cron不能保证16:00准点收到。已移除工作流启动时额外0–60秒随机等待。计划按工作日触发，由交易日检查跳过节假日；此时间只影响GitHub Actions，不改变本地`SCHEDULE_TIME`配置。
 
 漏跑时可在Actions的“每日股票分析”中选择main分支、full模式手动补跑；这会执行当天筛选、分析并向已有通知渠道发送结果。收盘后、最新完整交易日和有效覆盖检查仍然适用，不用`force_run`绕过日期核验。定时触发的限制见[GitHub官方说明](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)。
 
